@@ -1,67 +1,86 @@
+version: '3.8'
+
 services:
   db:
-    env_file:
-      - docker.env
     image: postgres:15
     container_name: sgdi-postgres
-    restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-    ports:
-      - "${POSTGRES_PORT}:5432"
+      POSTGRES_DB: sgdi_db
+      POSTGRES_USER: sgdi_user
+      POSTGRES_PASSWORD: sgdi_password
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - db_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U sgdi_user -d sgdi_db"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
+    networks:
+      - sgdi-network
 
   api:
     build: .
     container_name: sgdi-api
-    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://sgdi_user:sgdi_password@db:5432/sgdi_db
+      - DB_SCHEMA=sgdi
+      - JWT_SECRET_KEY=your-super-secret-jwt-key-here-change-in-production
+      - JWT_ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=30
+      - REFRESH_TOKEN_EXPIRE_DAYS=7
+      - STORAGE_PATH=/app/storage
+      - BACKUP_PATH=/app/backups
+      - MAX_UPLOAD_SIZE_MB=50
+      - ALLOWED_MIME_TYPES=application/pdf,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel
+      - SYSTEM_USER_ID=00000000-0000-0000-0000-000000000000
+      - SCHEDULER_ENABLED=true
+      - SCHEDULER_CRON=0 0 1 * *
+      - LOG_LEVEL=INFO
     ports:
       - "8000:8000"
-    env_file:
-      - docker.env
-    environment:
-      - DATABASE_URL=${DATABASE_URL}
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
-      - JWT_ALGORITHM=${JWT_ALGORITHM}
-      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES}
-      - REFRESH_TOKEN_EXPIRE_DAYS=${REFRESH_TOKEN_EXPIRE_DAYS}
-      - STORAGE_PATH=${STORAGE_PATH}
-      - BACKUP_PATH=${BACKUP_PATH}
-      - MAX_UPLOAD_SIZE_MB=${MAX_UPLOAD_SIZE_MB}
-      - ALLOWED_MIME_TYPES=${ALLOWED_MIME_TYPES}
+    volumes:
+      - storage:/app/storage
+      - backups:/app/backups
     depends_on:
       db:
         condition: service_healthy
-    volumes:
-      - ./data/storage:/data/storage
-      - ./data/backups:/data/backups
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+    command: >
+      sh -c "
+        echo 'Waiting for database...' &&
+        sleep 10 &&
+        echo 'Running database initialization...' &&
+        python scripts/apply_migrations.py --apply --dry-run-first=false &&
+        echo 'Starting application...' &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+    networks:
+      - sgdi-network
 
   pgadmin:
-    image: dpage/pgadmin4:7
+    image: dpage/pgadmin4:latest
     container_name: sgdi-pgadmin
-    restart: unless-stopped
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@sgdi.com
+      PGADMIN_DEFAULT_EMAIL: admin@sgdi.local
       PGADMIN_DEFAULT_PASSWORD: admin123
     ports:
-      - "5050:80"
+      - "8080:80"
     depends_on:
       - db
+    networks:
+      - sgdi-network
+    profiles:
+      - pgadmin
 
 volumes:
-  postgres_data:
+  db_data:
+    driver: local
+  storage:
+    driver: local
+  backups:
+    driver: local
+
+networks:
+  sgdi-network:
+    driver: bridge

@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  test-db:
+    image: postgres:15
+    container_name: sgdi-test-postgres
+    environment:
+      POSTGRES_DB: sgdi_test_db
+      POSTGRES_USER: sgdi_test_user
+      POSTGRES_PASSWORD: sgdi_test_password
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sgdi_test_user -d sgdi_test_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sgdi-test-network
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  test-api:
+    build: .
+    container_name: sgdi-test-api
+    environment:
+      - DATABASE_URL=postgresql://sgdi_test_user:sgdi_test_password@test-db:5432/sgdi_test_db
+      - DB_SCHEMA=sgdi_test
+      - JWT_SECRET_KEY=test-secret-key-for-testing-only
+      - JWT_ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=30
+      - REFRESH_TOKEN_EXPIRE_DAYS=7
+      - STORAGE_PATH=/tmp/test_storage
+      - BACKUP_PATH=/tmp/test_backups
+      - MAX_UPLOAD_SIZE_MB=50
+      - ALLOWED_MIME_TYPES=application/pdf,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel
+      - SYSTEM_USER_ID=00000000-0000-0000-0000-000000000000
+      - SCHEDULER_ENABLED=false
+      - LOG_LEVEL=INFO
+      - PYTHONDONTWRITEBYTECODE=1
+    depends_on:
+      test-db:
+        condition: service_healthy
+    command: >
+      sh -c "
+        echo 'Waiting for test database...' &&
+        sleep 10 &&
+        echo 'Restoring models __init__.py...' &&
+        python models_init_backup.py &&
+        echo 'Running tests...' &&
+        python test_imports_simple.py &&
+        echo 'Tests completed!'
+      "
+    networks:
+      - sgdi-test-network
+    volumes:
+      - ./htmlcov:/app/htmlcov
+    tmpfs:
+      - /tmp
+
+networks:
+  sgdi-test-network:
+    driver: bridge
