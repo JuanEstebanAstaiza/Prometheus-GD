@@ -1,6 +1,12 @@
-# Backup del contenido correcto para app/models/__init__.py
+#!/usr/bin/env python3
+"""
+Script to ensure models/__init__.py is correctly populated for Docker builds.
+"""
 
-CONTENT = '''# This file contains model imports for the SGDI application
+import os
+
+# Content for models/__init__.py
+INIT_CONTENT = '''# This file contains model imports for the SGDI application
 # Import Base from database module
 from ..core.database import Base
 
@@ -18,7 +24,17 @@ from .audit import Audit
 __version__ = "1.0.0"
 '''
 
-if __name__ == "__main__":
-    with open('app/models/__init__.py', 'w') as f:
-        f.write(CONTENT)
+def main():
+    init_file = "app/models/__init__.py"
+
+    # Ensure the directory exists
+    os.makedirs("app/models", exist_ok=True)
+
+    # Write the content
+    with open(init_file, 'w') as f:
+        f.write(INIT_CONTENT)
+
     print("✅ Archivo __init__.py restaurado")
+
+if __name__ == "__main__":
+    main()

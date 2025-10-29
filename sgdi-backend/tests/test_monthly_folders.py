@@ -44,7 +44,8 @@ def test_dependency(db_session: Session):
         name="Test Dependency",
         code="TEST"
     )
-    db_session.add(dep)
+    # Use merge to avoid duplicate key errors
+    dep = db_session.merge(dep)
     db_session.commit()
     return dep
 
@@ -60,7 +61,7 @@ def test_root_folder(db_session: Session, test_dependency: Dependency):
         created_by="00000000-0000-0000-0000-000000000000",
         updated_by="00000000-0000-0000-0000-000000000000"
     )
-    db_session.add(folder)
+    folder = db_session.merge(folder)
     db_session.commit()
     return folder
 

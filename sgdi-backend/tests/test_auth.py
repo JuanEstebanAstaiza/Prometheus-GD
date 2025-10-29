@@ -137,7 +137,7 @@ def test_rbac_worker_limited_access(client, auth_headers_worker):
 
     # Should not be able to access admin endpoints
     response = client.get("/admin/backups", headers=auth_headers_worker)
-    assert response.status_code == 403
+    assert response.status_code == 403  # Workers don't have access to admin endpoints
 
 def test_rate_limiting(client, super_admin_user):
     """Test login rate limiting"""

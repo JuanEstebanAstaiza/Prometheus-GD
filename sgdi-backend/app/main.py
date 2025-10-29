@@ -137,4 +137,4 @@ app.include_router(dependencies_routes.router, prefix="/dependencies", tags=["de
 app.include_router(folders_routes.router, prefix="/folders", tags=["folders"])
 app.include_router(files_routes.router, prefix="/files", tags=["files"])
 app.include_router(audit_routes.router, prefix="/audit", tags=["audit"])
-app.include_router(backups_routes.router, prefix="/backups", tags=["backups"])
+app.include_router(backups_routes.router, prefix="/admin/backups", tags=["backups"])

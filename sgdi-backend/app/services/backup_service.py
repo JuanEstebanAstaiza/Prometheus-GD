@@ -7,7 +7,7 @@ import hashlib
 import tempfile
 import uuid
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List, Tuple
 
 from ..core.config import settings
@@ -343,7 +343,7 @@ class BackupService:
                     total_files=backup_info["total_files"],
                     total_size_bytes=backup_info["total_size_bytes"],
                     checksum_sha256=checksum,
-                    metadata=metadata,
+                    backup_metadata=metadata,
                     created_by=created_by
                 )
                 db.add(backup_record)
@@ -411,7 +411,7 @@ class BackupService:
                     query = query.filter(ActionLog.details.contains({"dependency_id": dependency_id}))
                 # Limit to last 90 days to avoid huge backups
                 cutoff_date = datetime.utcnow() - timedelta(days=90)
-                query = query.filter(ActionLog.created_at >= cutoff_date)
+                query = query.filter(ActionLog.timestamp >= cutoff_date)
                 metadata["action_logs"] = [log.__dict__ for log in query.all()]
 
             # Clean up SQLAlchemy internal fields

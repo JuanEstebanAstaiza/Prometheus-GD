@@ -42,6 +42,11 @@ def tables(engine):
     # Create schema if it doesn't exist
     from sqlalchemy import text
     schema_name = os.getenv("DB_SCHEMA", "sgdi_test")
+
+    # Set the schema in the metadata to ensure tables are created in the correct schema
+    from app.core.database import Base
+    Base.metadata.schema = schema_name
+
     with engine.begin() as conn:
         conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema_name}"))
 
@@ -154,9 +159,9 @@ def test_dependency(db_session):
         name="Test Department",
         code="TESTDEP"
     )
-    db_session.add(dependency)
+    # Use merge to avoid duplicate key errors
+    dependency = db_session.merge(dependency)
     db_session.commit()
-    db_session.refresh(dependency)
     return dependency
 
 @pytest.fixture

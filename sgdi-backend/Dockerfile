@@ -31,6 +31,9 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 # Copy application code
 COPY . .
 
+# Ensure models/__init__.py is correctly populated
+RUN python models_init_backup.py
+
 # Create necessary directories
 RUN mkdir -p /app/storage /app/backups /app/logs && \
     chown -R sgdi:sgdi /app

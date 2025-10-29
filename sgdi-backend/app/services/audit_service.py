@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, func, desc, text
+from sqlalchemy import and_, or_, func, desc, text, String
 from typing import Optional, Dict, Any, List, Tuple
 import logging
 import csv
@@ -233,18 +233,21 @@ class AuditService:
                 # Complex filtering for dependency-related logs
                 # This includes logs where the dependency_id is explicitly mentioned
                 # or can be inferred from related entities
+                from ..core.database import DB_SCHEMA
+                schema_prefix = f"{DB_SCHEMA}." if DB_SCHEMA else ""
+
                 dependency_filter = text(f"""
-                    (action_log.details->>'dependency_id' = :dep_id) OR
-                    (action_log.target_type = 'folder' AND EXISTS (
-                        SELECT 1 FROM folders f WHERE f.id = action_log.target_id
+                    ({schema_prefix}action_logs.details->>'dependency_id' = :dep_id) OR
+                    ({schema_prefix}action_logs.target_type = 'folder' AND EXISTS (
+                        SELECT 1 FROM {schema_prefix}folders f WHERE f.id = {schema_prefix}action_logs.target_id
                         AND f.dependency_id = :dep_id
                     )) OR
-                    (action_log.target_type = 'file' AND EXISTS (
-                        SELECT 1 FROM files f WHERE f.id = action_log.target_id
+                    ({schema_prefix}action_logs.target_type = 'file' AND EXISTS (
+                        SELECT 1 FROM {schema_prefix}files f WHERE f.id = {schema_prefix}action_logs.target_id
                         AND f.dependency_id = :dep_id
                     )) OR
-                    (action_log.details->>'main_file_id' IS NOT NULL AND EXISTS (
-                        SELECT 1 FROM files f WHERE f.id = (action_log.details->>'main_file_id')
+                    ({schema_prefix}action_logs.details->>'main_file_id' IS NOT NULL AND EXISTS (
+                        SELECT 1 FROM {schema_prefix}files f WHERE f.id = ({schema_prefix}action_logs.details->>'main_file_id')
                         AND f.dependency_id = :dep_id
                     ))
                 """)
@@ -274,25 +277,29 @@ class AuditService:
             if requesting_user.role in ["ADMIN_DEP", "WORKER"]:
                 if requesting_user.dependency_id:
                     # For dependency-restricted users, apply the same complex filter
-                    dependency_filter = text("""
-                        (action_log.target_type = 'user' AND EXISTS (
-                            SELECT 1 FROM users u WHERE u.id = action_log.target_id
+                    # Create subquery for the count with dependency filtering
+                    from sqlalchemy import and_, or_, exists, text
+
+                    # Use raw SQL to avoid alias issues in complex queries
+                    # Get the schema name from database configuration
+                    from ..core.database import DB_SCHEMA
+                    schema_prefix = f"{DB_SCHEMA}." if DB_SCHEMA else ""
+
+                    dependency_filter = text(f"""
+                        ({schema_prefix}action_logs.target_type = 'user' AND EXISTS (
+                            SELECT 1 FROM {schema_prefix}users u WHERE u.id = {schema_prefix}action_logs.target_id
                             AND u.dependency_id = :dep_id
                         )) OR
-                        (action_log.target_type = 'folder' AND EXISTS (
-                            SELECT 1 FROM folders f WHERE f.id = action_log.target_id
+                        ({schema_prefix}action_logs.target_type = 'folder' AND EXISTS (
+                            SELECT 1 FROM {schema_prefix}folders f WHERE f.id = {schema_prefix}action_logs.target_id
                             AND f.dependency_id = :dep_id
                         )) OR
-                        (action_log.target_type = 'file' AND EXISTS (
-                            SELECT 1 FROM files f WHERE f.id = action_log.target_id
+                        ({schema_prefix}action_logs.target_type = 'file' AND EXISTS (
+                            SELECT 1 FROM {schema_prefix}files f WHERE f.id = {schema_prefix}action_logs.target_id
                             AND f.dependency_id = :dep_id
                         )) OR
-                        (action_log.target_type = 'file' AND EXISTS (
-                            SELECT 1 FROM files f WHERE f.id = action_log.target_id
-                            AND f.dependency_id = :dep_id
-                        )) OR
-                        (action_log.details->>'main_file_id' IS NOT NULL AND EXISTS (
-                            SELECT 1 FROM files f WHERE f.id = (action_log.details->>'main_file_id')
+                        ({schema_prefix}action_logs.details->>'main_file_id' IS NOT NULL AND EXISTS (
+                            SELECT 1 FROM {schema_prefix}files f WHERE f.id = ({schema_prefix}action_logs.details->>'main_file_id')
                             AND f.dependency_id = :dep_id
                         ))
                     """)
@@ -515,25 +522,26 @@ class AuditService:
         main_logs, _ = AuditService.query_audit_logs(
             db=db,
             target_type="file",
-            target_id=file_id,
             limit=1000,
             requesting_user=None
         )
+        # Filter by target_id
+        main_logs = [log for log in main_logs if log['target_id'] == file_id]
 
         # Get logs for annexes (files where main_file_id = file_id)
-        annex_files = db.query(File.id).filter(File.main_file_id == file_id).all()
-        annex_ids = [f.id for f, in annex_files]
+        annex_files = db.query(File).filter(File.main_file_id == file_id).all()
+        annex_ids = [f.id for f in annex_files]
 
         annex_logs = []
         for annex_id in annex_ids:
             logs, _ = AuditService.query_audit_logs(
                 db=db,
                 target_type="file",
-                target_id=annex_id,
                 limit=1000,
                 requesting_user=None
             )
-            annex_logs.extend(logs)
+            # Filter by target_id for this annex
+            annex_logs.extend([log for log in logs if log['target_id'] == annex_id])
 
         # Combine and sort by timestamp
         all_logs = main_logs + annex_logs

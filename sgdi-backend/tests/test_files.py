@@ -3,7 +3,7 @@ import hashlib
 from io import BytesIO
 from pathlib import Path
 
-def test_upload_main_file_only(client, auth_headers_worker, test_dependency, db_session):
+def test_upload_main_file_only(client, auth_headers_worker, test_dependency, worker_user, db_session):
     """Test uploading a main file without annexes"""
     # Create test folder first
     from app.models.folder import Folder
@@ -12,9 +12,10 @@ def test_upload_main_file_only(client, auth_headers_worker, test_dependency, db_
         name="Upload Test",
         path="Upload Test",
         dependency_id=test_dependency.id,
-        created_by="test-worker-id"
+        created_by=worker_user.id,
+        updated_by=worker_user.id
     )
-    db_session.add(test_folder)
+    test_folder = db_session.merge(test_folder)
     db_session.commit()
 
     # Create test file content
@@ -35,7 +36,7 @@ def test_upload_main_file_only(client, auth_headers_worker, test_dependency, db_
     assert data["annex_files"] is None
     assert data["annex_folder"] is None
 
-def test_upload_with_annexes(client, auth_headers_worker, test_dependency, db_session):
+def test_upload_with_annexes(client, auth_headers_worker, test_dependency, worker_user, db_session):
     """Test uploading a main file with annexes"""
     # Create test folder
     from app.models.folder import Folder
@@ -44,9 +45,10 @@ def test_upload_with_annexes(client, auth_headers_worker, test_dependency, db_se
         name="Annex Test",
         path="Annex Test",
         dependency_id=test_dependency.id,
-        created_by="test-worker-id"
+        created_by=worker_user.id,
+        updated_by=worker_user.id
     )
-    db_session.add(test_folder)
+    test_folder = db_session.merge(test_folder)
     db_session.commit()
 
     # Main file and annexes
@@ -106,16 +108,17 @@ def test_upload_wrong_dependency(client, auth_headers_worker, db_session):
     from app.models.folder import Folder
 
     other_dep = Dependency(id="other-dep", name="Other Dep", code="OTHER")
-    db_session.add(other_dep)
+    other_dep = db_session.merge(other_dep)
 
     other_folder = Folder(
         id="other-folder",
         name="Other Folder",
         path="Other Folder",
         dependency_id="other-dep",
-        created_by="other-user"
+        created_by="other-user",
+        updated_by="other-user"
     )
-    db_session.add(other_folder)
+    other_folder = db_session.merge(other_folder)
     db_session.commit()
 
     files = {"file": ("test.pdf", BytesIO(b"content"), "application/pdf")}
@@ -135,9 +138,10 @@ def test_download_file_checksum_verification(client, auth_headers_worker, test_d
         name="Download Test",
         path="Download Test",
         dependency_id=test_dependency.id,
-        created_by="test-worker-id"
+        created_by="test-worker-id",
+        updated_by="test-worker-id"
     )
-    db_session.add(test_folder)
+    test_folder = db_session.merge(test_folder)
 
     # Create test file
     from app.models.file import File
@@ -192,9 +196,10 @@ def test_update_file_versioning(client, auth_headers_worker, test_dependency, db
         name="Version Test",
         path="Version Test",
         dependency_id=test_dependency.id,
-        created_by="test-worker-id"
+        created_by="test-worker-id",
+        updated_by="test-worker-id"
     )
-    db_session.add(test_folder)
+    test_folder = db_session.merge(test_folder)
 
     # Create test file
     from app.models.file import File
@@ -254,9 +259,10 @@ def test_hard_delete_cascade_annexes(client, auth_headers_super_admin, test_depe
         name="Cascade Test",
         path="Cascade Test",
         dependency_id=test_dependency.id,
-        created_by="test-super-admin-id"
+        created_by="test-super-admin-id",
+        updated_by="test-super-admin-id"
     )
-    db_session.add(test_folder)
+    test_folder = db_session.merge(test_folder)
 
     # Create main file
     from app.models.file import File
@@ -348,9 +354,10 @@ def test_soft_delete_file(client, auth_headers_worker, test_dependency, db_sessi
         name="Soft Delete Test",
         path="Soft Delete Test",
         dependency_id=test_dependency.id,
-        created_by="test-worker-id"
+        created_by="test-worker-id",
+        updated_by="test-worker-id"
     )
-    db_session.add(test_folder)
+    test_folder = db_session.merge(test_folder)
 
     file_record = File(
         id=str(uuid.uuid4()),
@@ -389,9 +396,10 @@ def test_get_file_annexes(client, auth_headers_worker, test_dependency, db_sessi
         name="Annexes Test",
         path="Annexes Test",
         dependency_id=test_dependency.id,
-        created_by="test-worker-id"
+        created_by="test-worker-id",
+        updated_by="test-worker-id"
     )
-    db_session.add(test_folder)
+    test_folder = db_session.merge(test_folder)
 
     # Create main file
     from app.models.file import File
@@ -461,9 +469,10 @@ def test_upload_permissions_worker_in_dependency(client, auth_headers_worker, wo
         name="Worker Upload Test",
         path="Worker Upload Test",
         dependency_id=worker_user.dependency_id,
-        created_by=worker_user.id
+        created_by=worker_user.id,
+        updated_by=worker_user.id
     )
-    db_session.add(test_folder)
+    test_folder = db_session.merge(test_folder)
     db_session.commit()
 
     # Upload file
@@ -481,16 +490,17 @@ def test_upload_permissions_worker_wrong_dependency(client, auth_headers_worker,
     from app.models.folder import Folder
 
     other_dep = Dependency(id="wrong-dep", name="Wrong Dep", code="WRONG")
-    db_session.add(other_dep)
+    other_dep = db_session.merge(other_dep)
 
     wrong_folder = Folder(
         id="wrong-folder",
         name="Wrong Folder",
         path="Wrong Folder",
         dependency_id="wrong-dep",
-        created_by="wrong-user"
+        created_by="wrong-user",
+        updated_by="wrong-user"
     )
-    db_session.add(wrong_folder)
+    wrong_folder = db_session.merge(wrong_folder)
     db_session.commit()
 
     # Try to upload
