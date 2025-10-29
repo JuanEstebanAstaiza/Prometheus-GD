@@ -8,34 +8,43 @@ from sqlalchemy.pool import StaticPool
 from app.core.database import Base, get_db
 from app.core.config import Settings
 from app.models import User, Dependency, Folder, File, ActionLog, BackupRecord, RefreshToken
+from app.services.rate_limit_service import RateLimitService, configure_rate_limit_service_for_testing
 
-# Test database URL
-TEST_DATABASE_URL = "sqlite:///./test.db"
+# Test database URL - use PostgreSQL to match Docker setup
+TEST_DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://sgdi_test_user:sgdi_test_password@test-db:5432/sgdi_test_db")
 
 @pytest.fixture(scope="session")
 def test_settings():
-    """Test settings with SQLite database"""
+    """Test settings with PostgreSQL database"""
     return Settings(
         database_url=TEST_DATABASE_URL,
         storage_path="/tmp/test_storage",
         backup_path="/tmp/test_backups",
         jwt_secret_key="test-secret-key-for-testing-only",
-        system_user_id="00000000-0000-0000-0000-000000000000"
+        system_user_id="00000000-0000-0000-0000-000000000000",
+        disable_rate_limiting=True  # Disable rate limiting in tests
     )
+
+@pytest.fixture(scope="session", autouse=True)
+def configure_rate_limiting(test_settings):
+    """Configure rate limiting service for tests"""
+    configure_rate_limit_service_for_testing(test_settings)
 
 @pytest.fixture(scope="session")
 def engine(test_settings):
     """Create test database engine"""
-    engine = create_engine(
-        test_settings.database_url,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    engine = create_engine(test_settings.database_url)
     return engine
 
 @pytest.fixture(scope="session")
 def tables(engine):
     """Create all tables"""
+    # Create schema if it doesn't exist
+    from sqlalchemy import text
+    schema_name = os.getenv("DB_SCHEMA", "sgdi_test")
+    with engine.begin() as conn:
+        conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema_name}"))
+
     Base.metadata.create_all(bind=engine)
     yield
     Base.metadata.drop_all(bind=engine)

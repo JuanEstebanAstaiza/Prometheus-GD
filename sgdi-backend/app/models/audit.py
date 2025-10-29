@@ -1,30 +1,28 @@
 from sqlalchemy import Column, String, DateTime, Text, JSON, Boolean, ForeignKey
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
-from sqlalchemy.dialects.postgresql import UUID
-import uuid
 
 from ..core.database import Base
 
 class Audit(Base):
     __tablename__ = "audit_logs"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(String, primary_key=True)
     timestamp = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
 
     # Who performed the action
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
 
     # What action was performed
     action = Column(String(100), nullable=False, index=True)  # CREATE, UPDATE, DELETE, VIEW, DOWNLOAD, etc.
     resource_type = Column(String(50), nullable=False, index=True)  # user, folder, file, dependency, etc.
-    resource_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    resource_id = Column(String, nullable=False, index=True)
 
     # Additional context
     description = Column(Text)
     old_values = Column(JSON)  # Previous state (for updates)
     new_values = Column(JSON)  # New state (for creates/updates)
-    metadata = Column(JSON)  # Additional metadata (IP, user agent, etc.)
+    audit_metadata = Column(JSON)  # Additional metadata (IP, user agent, etc.)
 
     # System information
     ip_address = Column(String(45))  # IPv4/IPv6
@@ -52,7 +50,7 @@ class Audit(Base):
             "description": self.description,
             "old_values": self.old_values,
             "new_values": self.new_values,
-            "metadata": self.metadata,
+            "audit_metadata": self.audit_metadata,
             "ip_address": self.ip_address,
             "user_agent": self.user_agent,
             "session_id": self.session_id,

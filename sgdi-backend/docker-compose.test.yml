@@ -48,7 +48,7 @@ services:
         echo 'Restoring models __init__.py...' &&
         python models_init_backup.py &&
         echo 'Running tests...' &&
-        python test_imports_simple.py &&
+        python -m pytest tests/ -v --tb=short --cov=app --cov-report=term-missing --cov-report=html:htmlcov --cov-fail-under=80 &&
         echo 'Tests completed!'
       "
     networks:

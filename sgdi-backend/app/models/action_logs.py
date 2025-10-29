@@ -1,12 +1,13 @@
 from sqlalchemy import Column, String, DateTime, ForeignKey, JSON
 from sqlalchemy.sql import func
+import uuid
 
 from ..core.database import Base
 
 class ActionLog(Base):
     __tablename__ = "action_logs"
 
-    id = Column(String, primary_key=True)
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String, ForeignKey("users.id"))
     user_role = Column(String)
     action_type = Column(String, nullable=False)

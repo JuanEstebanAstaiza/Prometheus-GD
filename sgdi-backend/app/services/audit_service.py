@@ -46,22 +46,27 @@ class AuditService:
             Created action log entry
         """
         try:
-            action_log = ActionLog(
-                id=action_log_id,
-                user_id=user.id,
-                user_role=user.role,
-                action_type=action_type,
-                target_type=target_type,
-                target_id=target_id,
-                details=details,
-                ip_address=ip_address
-            )
+            # Create ActionLog with or without specific ID
+            action_log_kwargs = {
+                "user_id": user.id if user else None,
+                "user_role": user.role if user else None,
+                "action_type": action_type,
+                "target_type": target_type,
+                "target_id": target_id,
+                "details": details,
+                "ip_address": ip_address
+            }
+
+            if action_log_id is not None:
+                action_log_kwargs["id"] = action_log_id
+
+            action_log = ActionLog(**action_log_kwargs)
 
             db.add(action_log)
             db.commit()
             db.refresh(action_log)
 
-            logger.info(f"Action logged: {action_type} by user {user.email}")
+            logger.info(f"Action logged: {action_type} by user {user.email if user else 'system'}")
             return action_log
 
         except Exception as e:
@@ -249,8 +254,53 @@ class AuditService:
                 # User without dependency can't see any logs
                 return [], 0
 
-        # Get total count
-        count_query = query.with_entities(func.count(ActionLog.id))
+        # Get total count - create a separate count query without joins and ordering
+        count_query = db.query(func.count(ActionLog.id)).select_from(ActionLog)
+
+        # Apply the same filters to the count query
+        if user_id:
+            count_query = count_query.filter(ActionLog.user_id == user_id)
+        if action_type:
+            count_query = count_query.filter(ActionLog.action_type == action_type)
+        if target_type:
+            count_query = count_query.filter(ActionLog.target_type == target_type)
+        if start_date:
+            count_query = count_query.filter(ActionLog.timestamp >= start_date)
+        if end_date:
+            count_query = count_query.filter(ActionLog.timestamp <= end_date)
+
+        # Apply dependency filter for count query too
+        if requesting_user and requesting_user.role != "SUPER_ADMIN":
+            if requesting_user.role in ["ADMIN_DEP", "WORKER"]:
+                if requesting_user.dependency_id:
+                    # For dependency-restricted users, apply the same complex filter
+                    dependency_filter = text("""
+                        (action_log.target_type = 'user' AND EXISTS (
+                            SELECT 1 FROM users u WHERE u.id = action_log.target_id
+                            AND u.dependency_id = :dep_id
+                        )) OR
+                        (action_log.target_type = 'folder' AND EXISTS (
+                            SELECT 1 FROM folders f WHERE f.id = action_log.target_id
+                            AND f.dependency_id = :dep_id
+                        )) OR
+                        (action_log.target_type = 'file' AND EXISTS (
+                            SELECT 1 FROM files f WHERE f.id = action_log.target_id
+                            AND f.dependency_id = :dep_id
+                        )) OR
+                        (action_log.target_type = 'file' AND EXISTS (
+                            SELECT 1 FROM files f WHERE f.id = action_log.target_id
+                            AND f.dependency_id = :dep_id
+                        )) OR
+                        (action_log.details->>'main_file_id' IS NOT NULL AND EXISTS (
+                            SELECT 1 FROM files f WHERE f.id = (action_log.details->>'main_file_id')
+                            AND f.dependency_id = :dep_id
+                        ))
+                    """)
+                    count_query = count_query.filter(dependency_filter).params(dep_id=requesting_user.dependency_id)
+                else:
+                    # User without dependency can't see any logs
+                    return [], 0
+
         total_count = count_query.scalar()
 
         # Apply pagination and get results

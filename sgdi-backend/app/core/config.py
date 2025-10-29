@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     # Rate Limiting Configuration
     login_attempt_limit: int = 5  # Max login attempts per IP
     lockout_minutes: int = 15  # Lockout duration in minutes
+    disable_rate_limiting: bool = False  # Disable rate limiting for testing
 
     model_config = {
         "env_file": ".env",

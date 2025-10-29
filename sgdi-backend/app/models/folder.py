@@ -11,6 +11,7 @@ class Folder(Base):
     parent_id = Column(String, ForeignKey("folders.id"))
     dependency_id = Column(String, ForeignKey("dependencies.id"), nullable=False)
     created_by = Column(String, ForeignKey("users.id"))
+    updated_by = Column(String, ForeignKey("users.id"))
     path = Column(Text, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -25,6 +26,7 @@ class Folder(Base):
             "parent_id": self.parent_id,
             "dependency_id": self.dependency_id,
             "created_by": self.created_by,
+            "updated_by": self.updated_by,
             "path": self.path,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,

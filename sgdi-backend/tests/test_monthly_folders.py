@@ -30,7 +30,8 @@ def test_system_user(db_session: Session):
         role="SUPER_ADMIN",
         password_hash="system_hash"
     )
-    db_session.add(user)
+    # Use merge to avoid duplicate key errors
+    user = db_session.merge(user)
     db_session.commit()
     return user
 

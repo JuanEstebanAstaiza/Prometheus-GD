@@ -3,8 +3,33 @@ from datetime import datetime, timedelta
 
 def test_audit_logs_query_basic(client, auth_headers_super_admin, db_session):
     """Test basic audit logs query"""
-    # Create some test audit logs
+    # Create test users first
+    from app.models.user import User
     from app.models.action_logs import ActionLog
+
+    # Create test users
+    users_data = [
+        {
+            "id": "test-super-admin-id",
+            "email": "superadmin@test.com",
+            "full_name": "Test Super Admin",
+            "role": "SUPER_ADMIN",
+            "password_hash": "hash"
+        },
+        {
+            "id": "test-worker-id",
+            "email": "worker@test.com",
+            "full_name": "Test Worker",
+            "role": "WORKER",
+            "password_hash": "hash"
+        }
+    ]
+
+    for user_data in users_data:
+        user = User(**user_data)
+        db_session.merge(user)
+
+    db_session.commit()
 
     logs_data = [
         {
