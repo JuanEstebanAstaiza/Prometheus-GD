@@ -20,8 +20,8 @@ class Settings(BaseSettings):
     backup_path: str = "/app/backups"
 
     # Upload Configuration
-    max_upload_size_mb: int = 50
-    allowed_mime_types: str = "application/pdf,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,image/jpeg,image/png,text/plain,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    max_upload_size_mb: int = 200  # Aumentado a 200MB
+    allowed_mime_types: str = "application/pdf,text/csv,text/plain,application/msword,application/vnd.ms-excel,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/jpeg,image/jpg,image/png,image/gif,image/webp,image/bmp,application/zip,application/x-rar-compressed,application/x-7z-compressed,application/json,application/xml,text/xml"
 
     @property
     def max_upload_size_bytes(self) -> int:
@@ -29,9 +29,40 @@ class Settings(BaseSettings):
         return self.max_upload_size_mb * 1024 * 1024
 
     @property
-    def allowed_mime_types_list(self) -> list:
+    def allowed_mime_types_list(self) -> List[str]:
         """Get allowed MIME types as a list"""
-        return [mime.strip() for mime in self.allowed_mime_types.split(',') if mime.strip()]
+        # Fallback to hardcoded list if string is incomplete
+        default_types = [
+            "application/pdf",
+            "text/csv",
+            "text/plain",
+            "application/msword",
+            "application/vnd.ms-excel",
+            "application/vnd.ms-powerpoint",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "image/jpeg",
+            "image/jpg",
+            "image/png",
+            "image/gif",
+            "image/webp",
+            "image/bmp",
+            "application/zip",
+            "application/x-rar-compressed",
+            "application/x-7z-compressed",
+            "application/json",
+            "application/xml",
+            "text/xml"
+        ]
+        
+        if self.allowed_mime_types:
+            parsed = [mime.strip() for mime in self.allowed_mime_types.split(',') if mime.strip()]
+            # If parsed list is too short, use default
+            if len(parsed) < 10:
+                return default_types
+            return parsed
+        return default_types
 
     # System Configuration
     system_user_id: str = "00000000-0000-0000-0000-000000000000"

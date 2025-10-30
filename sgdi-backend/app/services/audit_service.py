@@ -27,7 +27,8 @@ class AuditService:
         target_id: Optional[str] = None,
         details: Optional[Dict[str, Any]] = None,
         ip_address: Optional[str] = None,
-        action_log_id: Optional[str] = None
+        action_log_id: Optional[str] = None,
+        auto_commit: bool = False
     ) -> ActionLog:
         """
         Create an action log entry
@@ -41,6 +42,7 @@ class AuditService:
             details: Additional details as JSON
             ip_address: Client IP address
             action_log_id: Specific ID for the log entry (optional)
+            auto_commit: If True, commit immediately (default: False, caller must commit)
 
         Returns:
             Created action log entry
@@ -63,15 +65,20 @@ class AuditService:
             action_log = ActionLog(**action_log_kwargs)
 
             db.add(action_log)
-            db.commit()
-            db.refresh(action_log)
+            
+            # Only commit if explicitly requested (for standalone calls)
+            if auto_commit:
+                db.commit()
+                db.refresh(action_log)
 
             logger.info(f"Action logged: {action_type} by user {user.email if user else 'system'}")
             return action_log
 
         except Exception as e:
             logger.error(f"Failed to create action log: {e}")
-            db.rollback()
+            # Only rollback if we were supposed to auto_commit
+            if auto_commit:
+                db.rollback()
             raise e
 
     @staticmethod

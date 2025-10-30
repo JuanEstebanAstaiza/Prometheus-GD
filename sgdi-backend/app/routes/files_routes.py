@@ -235,21 +235,21 @@ async def upload_file(
                 db.flush()
                 annex_folder_id = annex_folder.id
 
-                # TODO: Fix audit logging to work without transaction conflicts
-                # Audit log for folder creation
-                # audit_service.log_action(
-                #     db=db,
-                #     user=current_user,
-                #     action_type="CREATE_FOLDER",
-                #     target_type="FOLDER",
-                #     target_id=annex_folder.id,
-                #     details={
-                #         "name": annex_folder.name,
-                #         "path": annex_folder.path,
-                #         "purpose": "annex_folder",
-                #         "main_file": file.filename
-                #     }
-                # )
+                # Audit log for folder creation (no auto_commit, part of main transaction)
+                audit_service.log_action(
+                    db=db,
+                    user=current_user,
+                    action_type="CREATE_FOLDER",
+                    target_type="FOLDER",
+                    target_id=annex_folder.id,
+                    details={
+                        "name": annex_folder.name,
+                        "path": annex_folder.path,
+                        "purpose": "annex_folder",
+                        "main_file": file.filename
+                    },
+                    auto_commit=False  # Don't commit, let main transaction handle it
+                )
 
             # Process main file
             stored_filename = f"{str(uuid.uuid4())}{Path(file.filename).suffix}"
@@ -324,24 +324,41 @@ async def upload_file(
                     db.add(annex_file)
                     annex_file_records.append(annex_file)
 
-                    # TODO: Fix audit logging to work without transaction conflicts
-                    # Audit log for annex upload
-                    # audit_service.log_action(
-                    #     db=db,
-                    #     user=current_user,
-                    #     action_type="UPLOAD",
-                    #     target_type="FILE",
-                    #     target_id=annex_file.id,
-                    #     details={
-                    #         "filename": annex_filename,
-                    #         "size": len(annex_content),
-                    #         "is_annex": True,
-                    #         "main_file_id": main_file.id,
-                    #         "annex_folder_id": annex_folder_id
-                    #     }
-                    # )
+                    # Audit log for annex upload (no auto_commit, part of main transaction)
+                    audit_service.log_action(
+                        db=db,
+                        user=current_user,
+                        action_type="UPLOAD",
+                        target_type="FILE",
+                        target_id=annex_file.id,
+                        details={
+                            "filename": annex_filename,
+                            "size": len(annex_content),
+                            "is_annex": True,
+                            "main_file_id": main_file.id,
+                            "annex_folder_id": annex_folder_id
+                        },
+                        auto_commit=False  # Don't commit, let main transaction handle it
+                    )
 
-            # Commit all database changes
+            # Audit log for main file upload (before commit, part of main transaction)
+            audit_service.log_action(
+                db=db,
+                user=current_user,
+                action_type="UPLOAD",
+                target_type="FILE",
+                target_id=main_file.id,
+                details={
+                    "filename": file.filename,
+                    "size": len(main_content),
+                    "annex_count": len(annex_files),
+                    "annex_folder_id": annex_folder_id,
+                    "folder_path": folder.path
+                },
+                auto_commit=False  # Don't commit, let main transaction handle it
+            )
+
+            # Commit all database changes including audit logs
             db.commit()
             
             # Refresh objects to get updated data after commit
@@ -350,10 +367,6 @@ async def upload_file(
                 db.refresh(annex_folder)
             for annex_file in annex_file_records:
                 db.refresh(annex_file)
-
-            # TODO: Fix audit logging to work without transaction conflicts
-            # For now, audit logs are disabled to avoid transaction issues
-            # Audit log for main file upload should be added here with a new session
 
             # Prepare response
             response_data = {

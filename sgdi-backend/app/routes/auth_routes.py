@@ -49,7 +49,8 @@ async def login(
                 "user_agent": user_agent,
                 "email_attempted": user_credentials.email
             },
-            ip_address=client_ip
+            ip_address=client_ip,
+            auto_commit=True  # Standalone log, commit immediately
         )
 
         raise HTTPException(
@@ -74,7 +75,8 @@ async def login(
                 "user_agent": user_agent,
                 "email_attempted": user_credentials.email
             },
-            ip_address=client_ip
+            ip_address=client_ip,
+            auto_commit=True
         )
 
         raise HTTPException(
@@ -97,7 +99,8 @@ async def login(
                 "ip_address": client_ip,
                 "user_agent": user_agent
             },
-            ip_address=client_ip
+            ip_address=client_ip,
+            auto_commit=True
         )
 
         raise HTTPException(
@@ -138,7 +141,8 @@ async def login(
             "ip_address": client_ip,
             "user_agent": user_agent
         },
-        ip_address=client_ip
+        ip_address=client_ip,
+        auto_commit=True
     )
 
     return {
@@ -186,7 +190,8 @@ async def refresh_token(
                 "ip_address": client_ip,
                 "user_agent": user_agent
             },
-            ip_address=client_ip
+            ip_address=client_ip,
+            auto_commit=True
         )
 
         raise HTTPException(
@@ -213,7 +218,8 @@ async def refresh_token(
                 "ip_address": client_ip,
                 "user_agent": user_agent
             },
-            ip_address=client_ip
+            ip_address=client_ip,
+            auto_commit=True
         )
 
         raise HTTPException(
@@ -258,7 +264,8 @@ async def refresh_token(
             "ip_address": client_ip,
             "user_agent": user_agent
         },
-        ip_address=client_ip
+        ip_address=client_ip,
+        auto_commit=True
     )
 
     return {
@@ -325,7 +332,8 @@ async def logout(
             "user_agent": user_agent,
             "token_already_invalid": True
         },
-        ip_address=client_ip
+        ip_address=client_ip,
+        auto_commit=True
     )
 
     return {"message": "Successfully logged out"}
