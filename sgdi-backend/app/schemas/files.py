@@ -48,6 +48,7 @@ class FileResponse(FileBase):
     folder_id: str
     dependency_id: str
     uploaded_by: Optional[str]
+    uploaded_by_name: Optional[str] = None  # Nombre del usuario que subió el archivo
     version: int
     is_deleted: bool
     main_file_id: Optional[str]
@@ -56,6 +57,7 @@ class FileResponse(FileBase):
 
     model_config = {
         "from_attributes": True,
+        "populate_by_name": True,
         "json_schema_extra": {
             "example": {
                 "id": "file-uuid-123",

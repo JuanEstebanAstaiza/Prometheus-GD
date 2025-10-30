@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Limpiar Caché - SGDI</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 600px;
+      margin: 100px auto;
+      padding: 40px;
+      text-align: center;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      color: white;
+    }
+    .card {
+      background: white;
+      padding: 40px;
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      color: #333;
+    }
+    h1 {
+      margin-bottom: 10px;
+      color: #667eea;
+    }
+    p {
+      font-size: 18px;
+      line-height: 1.6;
+      color: #666;
+    }
+    .big-emoji {
+      font-size: 80px;
+      margin: 20px 0;
+    }
+    button {
+      background: #667eea;
+      color: white;
+      border: none;
+      padding: 15px 40px;
+      font-size: 18px;
+      border-radius: 8px;
+      cursor: pointer;
+      margin: 10px;
+      transition: all 0.3s;
+    }
+    button:hover {
+      background: #5568d3;
+      transform: translateY(-2px);
+      box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+    }
+    .success {
+      color: #059669;
+      font-weight: bold;
+      margin-top: 20px;
+      display: none;
+    }
+    .steps {
+      text-align: left;
+      background: #f9fafb;
+      padding: 20px;
+      border-radius: 8px;
+      margin: 20px 0;
+    }
+    .steps li {
+      margin: 10px 0;
+      color: #333;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="big-emoji">🧹</div>
+    <h1>Caché del Navegador Detectado</h1>
+    <p>Tu navegador está usando una versión antigua del backend que <strong>no tenía CORS configurado</strong>.</p>
+    
+    <div class="steps">
+      <p><strong>Sigue estos pasos:</strong></p>
+      <ol>
+        <li>Haz clic en el botón de abajo</li>
+        <li>Marca solo <strong>"Imágenes y archivos en caché"</strong></li>
+        <li>Selecciona <strong>"Desde siempre"</strong></li>
+        <li>Haz clic en <strong>"Borrar datos"</strong></li>
+        <li>Vuelve a cargar la aplicación</li>
+      </ol>
+    </div>
+
+    <button onclick="clearCache()">🗑️ Abrir Configuración de Caché</button>
+    <button onclick="goIncognito()">🕶️ Usar Modo Incógnito</button>
+    <button onclick="goBack()">← Volver a la App</button>
+
+    <div class="success" id="success">
+      ✅ ¡Configuración abierta! Limpia el caché y luego haz clic en "Volver a la App"
+    </div>
+  </div>
+
+  <script>
+    function clearCache() {
+      // Intentar abrir la configuración según el navegador
+      const isChrome = /Chrome/.test(navigator.userAgent) && /Google Inc/.test(navigator.vendor);
+      const isFirefox = /Firefox/.test(navigator.userAgent);
+      const isEdge = /Edg/.test(navigator.userAgent);
+
+      if (isChrome || isEdge) {
+        window.open('chrome://settings/clearBrowserData', '_blank');
+        document.getElementById('success').style.display = 'block';
+      } else if (isFirefox) {
+        window.open('about:preferences#privacy', '_blank');
+        document.getElementById('success').style.display = 'block';
+      } else {
+        alert('Presiona Ctrl+Shift+Delete para abrir la configuración de caché de tu navegador.');
+      }
+    }
+
+    function goIncognito() {
+      alert('Presiona Ctrl+Shift+N (Chrome/Edge) o Ctrl+Shift+P (Firefox) para abrir una ventana incógnita.\n\nLuego ve a: http://localhost:3000');
+    }
+
+    function goBack() {
+      // Forzar recarga sin caché
+      window.location.href = 'http://localhost:3000/#/archivos?nocache=' + Date.now();
+    }
+
+    // Auto-check si CORS funciona
+    setTimeout(() => {
+      fetch('http://localhost:8000/health')
+        .then(response => {
+          const corsHeader = response.headers.get('access-control-allow-origin');
+          if (corsHeader) {
+            const msg = document.createElement('div');
+            msg.style.cssText = 'background: #d1fae5; padding: 15px; border-radius: 8px; margin-top: 20px; color: #065f46;';
+            msg.innerHTML = `<strong>✅ Buenas noticias:</strong> El backend YA está devolviendo CORS correctamente. Solo necesitas limpiar el caché de tu navegador.`;
+            document.querySelector('.card').appendChild(msg);
+          }
+        })
+        .catch(err => console.error('CORS check failed:', err));
+    }, 1000);
+  </script>
+</body>
+</html>
+

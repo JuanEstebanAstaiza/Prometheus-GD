@@ -34,8 +34,9 @@ COPY . .
 # Ensure models/__init__.py is correctly populated
 RUN python models_init_backup.py
 
-# Create necessary directories
+# Create necessary directories and make start script executable
 RUN mkdir -p /app/storage /app/backups /app/logs && \
+    chmod +x /app/start.sh && \
     chown -R sgdi:sgdi /app
 
 # Switch to non-root user
@@ -48,5 +49,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run the application directly without reload (ensures CORS loads)
+CMD ["sh", "-c", "python seed_admin.py && uvicorn app.main:app --host 0.0.0.0 --port 8000 --no-reload"]

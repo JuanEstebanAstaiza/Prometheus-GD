@@ -73,10 +73,23 @@ async def read_files(
     # Get total count
     total = query.count()
 
-    # Get paginated results
+    # Get paginated results with user information
     files = query.offset(skip).limit(limit).all()
+    
+    # Enrich with uploaded_by_name
+    files_with_names = []
+    for file in files:
+        file_dict = {
+            **{c.name: getattr(file, c.name) for c in file.__table__.columns},
+            "uploaded_by_name": None
+        }
+        if file.uploaded_by:
+            uploader = db.query(User).filter(User.id == file.uploaded_by).first()
+            if uploader:
+                file_dict["uploaded_by_name"] = uploader.full_name
+        files_with_names.append(file_dict)
 
-    return {"items": files, "total": total}
+    return {"items": files_with_names, "total": total}
 
 @router.post("/upload", response_model=FileUploadResponse, status_code=status.HTTP_201_CREATED, responses={
     201: {"model": FileUploadResponse},
@@ -430,6 +443,253 @@ async def read_file(
             )
 
     return file
+
+@router.put("/{file_id}", response_model=FileResponse, responses={
+    200: {"model": FileResponse},
+    403: {"model": ErrorResponse},
+    404: {"model": NotFoundResponse},
+    415: {"model": ErrorResponse}
+})
+async def update_file(
+    file_id: str,
+    file: UploadFile = FastAPIFile(...),
+    current_user: User = Depends(require_worker_or_higher),
+    db: Session = Depends(get_db)
+):
+    """
+    Replace/update an existing file with a new version
+    """
+    # Get existing file
+    existing_file = db.query(File).filter(File.id == file_id).first()
+    if not existing_file or existing_file.is_deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found"
+        )
+
+    # Check permissions
+    if current_user.role not in ["SUPER_ADMIN", "ADMIN_DEP"]:
+        if current_user.dependency_id != existing_file.dependency_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. You can only update files in your dependency."
+            )
+
+    # Validate MIME type
+    if not storage_service.validate_mime_type(file.content_type):
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=f"Unsupported file type: {file.content_type}"
+        )
+
+    # Get dependency and folder
+    dependency = db.query(Dependency).filter(Dependency.id == existing_file.dependency_id).first()
+    folder = db.query(Folder).filter(Folder.id == existing_file.folder_id).first()
+
+    if not dependency or not folder:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="File metadata corrupted"
+        )
+
+    # Read new file content
+    new_content = await file.read()
+    new_size = len(new_content)
+    
+    # Validate size
+    if new_size > settings.max_upload_size_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File size exceeds maximum allowed size of {settings.max_upload_size_mb}MB"
+        )
+
+    # Calculate new checksum
+    new_checksum = storage_service.compute_checksum(new_content)
+
+    # Get old file path
+    old_file_path = storage_service.get_file_path(
+        dependency.code, folder.path, existing_file.stored_name
+    )
+
+    # Create version backup (move old file to versions directory)
+    version_info = {
+        "version": existing_file.version + 1,
+        "previous_version": existing_file.version,
+        "previous_name": existing_file.original_name,
+        "previous_size": existing_file.size_bytes,
+        "previous_checksum": existing_file.checksum_sha256,
+        "previous_mime": existing_file.mime_type,
+        "updated_by": current_user.email,
+        "updated_at": datetime.utcnow().isoformat()
+    }
+
+    # Generate new stored name (keep extension from new file)
+    new_extension = Path(file.filename).suffix
+    new_stored_name = f"{uuid.uuid4()}{new_extension}"
+
+    try:
+        # Save new file
+        new_file_path = storage_service.save_file(
+            new_content, dependency.code, folder.path, new_stored_name
+        )
+
+        # Update database
+        existing_file.original_name = file.filename
+        existing_file.stored_name = new_stored_name
+        existing_file.size_bytes = new_size
+        existing_file.mime_type = file.content_type
+        existing_file.checksum_sha256 = new_checksum
+        existing_file.version = existing_file.version + 1
+        existing_file.updated_at = datetime.utcnow()
+        
+        # Store version info in metadata
+        if not existing_file.metadata:
+            existing_file.metadata = {}
+        if "versions" not in existing_file.metadata:
+            existing_file.metadata["versions"] = []
+        existing_file.metadata["versions"].append(version_info)
+
+        # Audit log
+        audit_service.log_action(
+            db=db,
+            user=current_user,
+            action_type="UPDATE",
+            target_type="FILE",
+            target_id=existing_file.id,
+            details={
+                "filename": file.filename,
+                "previous_version": version_info["previous_version"],
+                "new_version": existing_file.version,
+                "size": new_size,
+                "mime_type": file.content_type
+            },
+            auto_commit=False
+        )
+
+        # Commit changes
+        db.commit()
+        db.refresh(existing_file)
+
+        # Delete old physical file after successful DB commit
+        try:
+            if old_file_path.exists():
+                old_file_path.unlink()
+        except Exception as e:
+            logger.warning(f"Failed to delete old file {old_file_path}: {e}")
+
+        return existing_file
+
+    except Exception as e:
+        logger.error(f"Error updating file: {e}")
+        db.rollback()
+        # Clean up new file if it was created
+        try:
+            if new_file_path and new_file_path.exists():
+                new_file_path.unlink()
+        except:
+            pass
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update file"
+        )
+
+@router.get("/{file_id}/preview", responses={
+    200: {"description": "File preview (inline display)"},
+    403: {"model": ErrorResponse},
+    404: {"model": NotFoundResponse},
+    415: {"model": ErrorResponse}
+})
+async def preview_file(
+    file_id: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Preview file inline (only for PDFs and images)
+    """
+    file = db.query(File).filter(File.id == file_id).first()
+    if not file or file.is_deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found"
+        )
+
+    # Only allow preview for PDFs and images
+    previewable_types = [
+        "application/pdf",
+        "image/jpeg",
+        "image/jpg",
+        "image/png",
+        "image/gif",
+        "image/webp",
+        "image/bmp"
+    ]
+    
+    if file.mime_type not in previewable_types:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=f"File type {file.mime_type} cannot be previewed. Only PDFs and images are supported."
+        )
+
+    # Check permissions
+    if current_user.role != "SUPER_ADMIN":
+        if current_user.dependency_id != file.dependency_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. You can only preview files from your dependency."
+            )
+
+    # Get dependency for path
+    dependency = db.query(Dependency).filter(Dependency.id == file.dependency_id).first()
+    folder = db.query(Folder).filter(Folder.id == file.folder_id).first()
+
+    if not dependency or not folder:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="File metadata corrupted"
+        )
+
+    # Get file path
+    file_path = storage_service.get_file_path(
+        dependency.code, folder.path, file.stored_name
+    )
+
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found on disk"
+        )
+
+    # Audit log preview
+    audit_service.log_action(
+        db=db,
+        user=current_user,
+        action_type="PREVIEW",
+        target_type="FILE",
+        target_id=file.id,
+        details={
+            "filename": file.original_name,
+            "mime_type": file.mime_type
+        },
+        auto_commit=True
+    )
+
+    # Stream file with inline disposition
+    def file_iterator():
+        with open(file_path, "rb") as f:
+            while chunk := f.read(8192):
+                yield chunk
+
+    return StreamingResponse(
+        file_iterator(),
+        media_type=file.mime_type,
+        headers={
+            "Content-Disposition": f'inline; filename="{file.original_name}"',
+            "X-Checksum-Sha256": file.checksum_sha256,
+            "X-File-Id": file.id,
+            "Cache-Control": "public, max-age=3600"
+        }
+    )
 
 @router.get("/{file_id}/download", responses={
     200: {"description": "File download"},

@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test CORS - SGDI</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .test-box {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      margin: 20px 0;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .success { color: #059669; }
+    .error { color: #dc2626; }
+    .info { color: #0284c7; }
+    button {
+      background: #6366f1;
+      color: white;
+      padding: 10px 20px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 16px;
+      margin: 5px;
+    }
+    button:hover { background: #4f46e5; }
+    pre {
+      background: #1e293b;
+      color: #e2e8f0;
+      padding: 15px;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+  <h1>🧪 Test de CORS - SGDI Backend</h1>
+  
+  <div class="test-box">
+    <h2>Test 1: OPTIONS Request (Preflight)</h2>
+    <button onclick="testOptions()">Ejecutar Test OPTIONS</button>
+    <div id="result-options"></div>
+  </div>
+
+  <div class="test-box">
+    <h2>Test 2: GET Request</h2>
+    <button onclick="testGet()">Ejecutar Test GET</button>
+    <div id="result-get"></div>
+  </div>
+
+  <div class="test-box">
+    <h2>Test 3: PUT Request (Simulado)</h2>
+    <button onclick="testPut()">Ejecutar Test PUT</button>
+    <div id="result-put"></div>
+  </div>
+
+  <div class="test-box">
+    <h2>Test 4: Limpiar Caché y Reintentar</h2>
+    <button onclick="clearAndRetry()">Limpiar Caché del Navegador</button>
+    <p class="info">⚠️ Esto abrirá la configuración del navegador. Limpia el caché y recarga esta página.</p>
+  </div>
+
+  <script>
+    const API_URL = 'http://localhost:8000';
+    
+    async function testOptions() {
+      const resultDiv = document.getElementById('result-options');
+      resultDiv.innerHTML = '<p class="info">⏳ Ejecutando...</p>';
+      
+      try {
+        const response = await fetch(`${API_URL}/files/test-id`, {
+          method: 'OPTIONS',
+          headers: {
+            'Origin': 'http://localhost:3000',
+            'Access-Control-Request-Method': 'PUT',
+            'Access-Control-Request-Headers': 'authorization'
+          }
+        });
+        
+        const headers = {};
+        response.headers.forEach((value, key) => {
+          if (key.includes('access-control')) {
+            headers[key] = value;
+          }
+        });
+        
+        resultDiv.innerHTML = `
+          <p class="success">✅ OPTIONS exitoso - Status: ${response.status}</p>
+          <pre>${JSON.stringify(headers, null, 2)}</pre>
+        `;
+      } catch (error) {
+        resultDiv.innerHTML = `
+          <p class="error">❌ Error: ${error.message}</p>
+          <p>El navegador bloqueó la petición. <strong>Limpia el caché!</strong></p>
+        `;
+      }
+    }
+    
+    async function testGet() {
+      const resultDiv = document.getElementById('result-get');
+      resultDiv.innerHTML = '<p class="info">⏳ Ejecutando...</p>';
+      
+      try {
+        const response = await fetch(`${API_URL}/health`);
+        const data = await response.json();
+        
+        const corsHeader = response.headers.get('access-control-allow-origin');
+        
+        resultDiv.innerHTML = `
+          <p class="success">✅ GET exitoso - Status: ${response.status}</p>
+          <p><strong>CORS Header:</strong> ${corsHeader || 'NO PRESENTE ❌'}</p>
+          <pre>${JSON.stringify(data, null, 2)}</pre>
+        `;
+      } catch (error) {
+        resultDiv.innerHTML = `
+          <p class="error">❌ Error: ${error.message}</p>
+        `;
+      }
+    }
+    
+    async function testPut() {
+      const resultDiv = document.getElementById('result-put');
+      resultDiv.innerHTML = '<p class="info">⏳ Ejecutando...</p>';
+      
+      const formData = new FormData();
+      formData.append('file', new Blob(['test'], { type: 'text/plain' }), 'test.txt');
+      
+      try {
+        const response = await fetch(`${API_URL}/files/test-fake-id-12345`, {
+          method: 'PUT',
+          headers: {
+            'Authorization': 'Bearer fake-token-for-testing'
+          },
+          body: formData
+        });
+        
+        const corsHeader = response.headers.get('access-control-allow-origin');
+        const text = await response.text();
+        
+        resultDiv.innerHTML = `
+          <p class="${response.ok ? 'success' : 'info'}">
+            ${response.ok ? '✅' : 'ℹ️'} PUT ejecutado - Status: ${response.status}
+          </p>
+          <p><strong>CORS Header:</strong> ${corsHeader || 'NO PRESENTE ❌'}</p>
+          <p class="info">Nota: Es normal que devuelva 401/403/404 (archivo no existe). Lo importante es que NO sea error de CORS.</p>
+          <pre>${text}</pre>
+        `;
+      } catch (error) {
+        resultDiv.innerHTML = `
+          <p class="error">❌ Error de CORS: ${error.message}</p>
+          <p class="error"><strong>🔴 EL NAVEGADOR ESTÁ BLOQUEANDO POR CACHÉ!</strong></p>
+          <p>Solución:</p>
+          <ol>
+            <li>Presiona Ctrl+Shift+R para hard refresh</li>
+            <li>O usa el botón de abajo para limpiar caché</li>
+            <li>O abre en ventana incógnita (Ctrl+Shift+N)</li>
+          </ol>
+        `;
+      }
+    }
+    
+    function clearAndRetry() {
+      // Intentar abrir la configuración del navegador
+      if (window.chrome) {
+        window.open('chrome://settings/clearBrowserData', '_blank');
+      } else if (window.navigator.userAgent.includes('Firefox')) {
+        window.open('about:preferences#privacy', '_blank');
+      } else {
+        alert('Presiona Ctrl+Shift+Delete para abrir la configuración de limpieza de caché de tu navegador.');
+      }
+    }
+    
+    // Auto-ejecutar tests al cargar
+    window.addEventListener('load', () => {
+      console.log('🧪 Página de test CORS cargada');
+      console.log('Haz clic en los botones para ejecutar tests individuales');
+    });
+  </script>
+</body>
+</html>
+

@@ -101,7 +101,13 @@ class UI {
 
     // Crear modal
     const modal = document.createElement('div');
-    modal.className = options.size === 'large' ? 'modal modal-large' : 'modal';
+    if (options.size === 'fullscreen') {
+      modal.className = 'modal modal-fullscreen';
+    } else if (options.size === 'large') {
+      modal.className = 'modal modal-large';
+    } else {
+      modal.className = 'modal';
+    }
 
     // Header
     const header = document.createElement('div');

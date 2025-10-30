@@ -306,7 +306,10 @@ class FetchWrapper {
    * @param {FormData} formData - FormData con archivos
    * @param {Function} onProgress - Callback (percent) => void
    */
-  upload(url, formData, onProgress = null) {
+  /**
+   * Upload con método HTTP personalizable (POST, PUT, PATCH)
+   */
+  uploadWithMethod(url, formData, method = 'POST', onProgress = null) {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       const fullUrl = url.startsWith('http') ? url : `${this.baseURL}${url}`;
@@ -336,7 +339,7 @@ class FetchWrapper {
             .then(() => {
               // Reintentar upload con nuevo token
               const retryFormData = formData; // FormData es reutilizable
-              this.upload(url, retryFormData, onProgress)
+              this.uploadWithMethod(url, retryFormData, method, onProgress)
                 .then(resolve)
                 .catch(reject);
             })
@@ -367,7 +370,7 @@ class FetchWrapper {
       });
 
       // Configurar request
-      xhr.open('POST', fullUrl);
+      xhr.open(method, fullUrl);
       xhr.timeout = this.defaultTimeout;
 
       // Headers (sin Content-Type para que el navegador lo establezca con boundary)
@@ -380,6 +383,13 @@ class FetchWrapper {
       // Enviar
       xhr.send(formData);
     });
+  }
+
+  /**
+   * Upload POST (por compatibilidad)
+   */
+  upload(url, formData, onProgress = null) {
+    return this.uploadWithMethod(url, formData, 'POST', onProgress);
   }
 
   /**

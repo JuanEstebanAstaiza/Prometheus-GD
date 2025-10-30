@@ -378,7 +378,16 @@ class FilesManager {
         <td>${this.escapeHtml(file.uploaded_by_name || 'N/A')}</td>
         <td>${new Date(file.created_at).toLocaleDateString()}</td>
         <td>
-          <div style="display: flex; gap: 0.25rem;">
+          <div style="display: flex; gap: 0.25rem; flex-wrap: wrap;">
+            ${file.mime_type === 'application/pdf' || file.mime_type?.startsWith('image/') ? `
+              <button 
+                class="btn btn-sm btn-info" 
+                onclick="filesManager.previewFile('${file.id}', '${this.escapeHtml(file.original_name || file.name)}', '${file.mime_type}')"
+                title="Previsualizar"
+              >
+                👁️
+              </button>
+            ` : ''}
             <button 
               class="btn btn-sm btn-secondary" 
               onclick="filesManager.downloadFile('${file.id}', '${this.escapeHtml(file.original_name || file.name)}')"
@@ -387,6 +396,13 @@ class FilesManager {
               ⬇
             </button>
             ${!isDeleted ? `
+              <button 
+                class="btn btn-sm btn-warning" 
+                onclick="filesManager.showUpdateFileModal('${file.id}', '${this.escapeHtml(file.original_name || file.name)}')"
+                title="Actualizar/Reemplazar"
+              >
+                🔄
+              </button>
               <button 
                 class="btn btn-sm btn-danger" 
                 onclick="filesManager.deleteFile('${file.id}')"
@@ -1182,6 +1198,194 @@ class FilesManager {
       console.error('[files.js] Error loading file details:', error);
       ui.hideLoading();
       ui.error('Error al cargar los detalles del archivo');
+    }
+  }
+
+  /**
+   * Previsualiza un archivo (PDF o imagen)
+   */
+  async previewFile(fileId, fileName, mimeType) {
+    try {
+      // Obtener el archivo con autenticación adecuada
+      const response = await fetch(`${fetchWrapper.baseURL}/files/${fileId}/preview`, {
+        headers: {
+          'Authorization': `Bearer ${auth.getAccessToken()}`
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Error ${response.status}: ${response.statusText}`);
+      }
+
+      const blob = await response.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+      
+      const modalContent = document.createElement('div');
+      // Estilos para que el contenedor ocupe todo el espacio del modal
+      modalContent.style.width = '100%';
+      modalContent.style.height = 'calc(95vh - 140px)'; // Altura total menos header y footer
+      modalContent.style.minHeight = '600px';
+      modalContent.style.display = 'flex';
+      modalContent.style.flexDirection = 'column';
+      
+      if (mimeType === 'application/pdf') {
+        // Previsualizar PDF con iframe usando blob URL
+        modalContent.innerHTML = `
+          <iframe 
+            src="${blobUrl}" 
+            style="width: 100%; height: 100%; min-height: 600px; border: none; flex: 1;"
+            title="Vista previa de ${this.escapeHtml(fileName)}"
+          ></iframe>
+        `;
+      } else if (mimeType?.startsWith('image/')) {
+        // Previsualizar imagen usando blob URL
+        modalContent.innerHTML = `
+          <div style="display: flex; justify-content: center; align-items: center; width: 100%; height: 100%; min-height: 600px; background: #f5f5f5; flex: 1;">
+            <img 
+              src="${blobUrl}" 
+              alt="${this.escapeHtml(fileName)}"
+              style="max-width: 100%; max-height: 100%; object-fit: contain;"
+            />
+          </div>
+        `;
+      } else {
+        window.URL.revokeObjectURL(blobUrl);
+        ui.warning('Este tipo de archivo no se puede previsualizar');
+        return;
+      }
+      
+      ui.showModal(`Vista previa: ${this.escapeHtml(fileName)}`, modalContent.innerHTML, {
+        size: 'fullscreen',
+        buttons: [
+          {
+            text: 'Descargar',
+            class: 'btn btn-primary',
+            onClick: () => this.downloadFile(fileId, fileName)
+          },
+          {
+            text: 'Cerrar',
+            class: 'btn btn-secondary',
+            onClick: () => {
+              // Limpiar blob URL al cerrar
+              window.URL.revokeObjectURL(blobUrl);
+            }
+          }
+        ]
+      });
+    } catch (error) {
+      console.error('[files.js] Error previewing file:', error);
+      ui.error('Error al previsualizar el archivo');
+    }
+  }
+
+  /**
+   * Muestra el modal para actualizar/reemplazar un archivo
+   */
+  async showUpdateFileModal(fileId, currentFileName) {
+    const content = document.createElement('div');
+    content.innerHTML = `
+      <div class="alert alert-info" style="margin-bottom: 1rem;">
+        <strong>Archivo actual:</strong> ${this.escapeHtml(currentFileName)}<br>
+        <small>Se creará una nueva versión del archivo y se mantendrá el historial.</small>
+      </div>
+      
+      <form id="updateFileForm" enctype="multipart/form-data">
+        <div class="form-group">
+          <label class="form-label">Nuevo Archivo *</label>
+          <input 
+            type="file" 
+            id="updateFile" 
+            class="form-input" 
+            required
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.jpg,.jpeg,.png,.gif,.zip,.rar,.7z"
+          >
+          <small class="form-help">Tamaño máximo: 200MB</small>
+        </div>
+
+        <div id="updateProgress" class="hidden" style="margin-top: 1rem;">
+          <div class="progress-bar-container">
+            <div id="updateProgressBar" class="progress-bar" style="width: 0%"></div>
+          </div>
+          <p id="updateProgressText" style="text-align: center; margin-top: 0.5rem;">0%</p>
+        </div>
+      </form>
+    `;
+
+    ui.showModal('Actualizar Archivo', content.innerHTML, {
+      buttons: [
+        {
+          text: 'Actualizar',
+          class: 'btn btn-primary',
+          onClick: async () => {
+            const fileInput = document.getElementById('updateFile');
+            if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+              ui.warning('Por favor selecciona un archivo');
+              return false; // No cerrar el modal
+            }
+
+            try {
+              await this.updateFile(fileId, fileInput.files[0]);
+              return true; // Cerrar el modal
+            } catch (error) {
+              return false; // No cerrar el modal si hay error
+            }
+          }
+        },
+        {
+          text: 'Cancelar',
+          class: 'btn btn-secondary'
+        }
+      ]
+    });
+  }
+
+  /**
+   * Actualiza/reemplaza un archivo existente
+   */
+  async updateFile(fileId, newFile) {
+    try {
+      console.log('[files.js] Iniciando actualización de archivo:', fileId);
+      
+      // Mostrar progreso
+      const progressContainer = document.getElementById('updateProgress');
+      const progressBar = document.getElementById('updateProgressBar');
+      const progressText = document.getElementById('updateProgressText');
+      
+      if (progressContainer) progressContainer.classList.remove('hidden');
+      if (progressBar) progressBar.style.width = '50%';
+      if (progressText) progressText.textContent = '50%';
+
+      // Crear FormData
+      const formData = new FormData();
+      formData.append('file', newFile);
+
+      console.log('[files.js] Enviando PUT request...');
+      console.log('[files.js] URL:', `/files/${fileId}`);
+      console.log('[files.js] Token:', auth.getAccessToken() ? 'Presente' : 'Ausente');
+
+      // Usar fetchWrapper.uploadWithMethod con PUT
+      // Esto usa XMLHttpRequest con headers correctos y manejo de 401
+      const result = await fetchWrapper.uploadWithMethod(
+        `/files/${fileId}`, 
+        formData, 
+        'PUT',  // Método HTTP
+        (percent) => {
+          if (progressBar) progressBar.style.width = `${percent}%`;
+          if (progressText) progressText.textContent = `${percent}%`;
+        }
+      );
+
+      console.log('[files.js] Archivo actualizado exitosamente:', result);
+
+      ui.success('Archivo actualizado correctamente');
+      
+      // Recargar archivos
+      await this.loadFiles();
+
+    } catch (error) {
+      console.error('[files.js] Error updating file:', error);
+      ui.error(error.message || 'Error al actualizar el archivo');
+      throw error;
     }
   }
 

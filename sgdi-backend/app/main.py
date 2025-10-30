@@ -24,12 +24,14 @@ app = FastAPI(
 )
 
 # Configure CORS
+# Para desarrollo, usar "*" es más simple. En producción, especificar orígenes exactos.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["*"],  # Permitir todos los orígenes en desarrollo
+    allow_credentials=False,  # No usar credentials (usamos Authorization Bearer)
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["*"],  # Permitir todos los headers
+    expose_headers=["Content-Disposition", "X-Checksum-Sha256", "X-File-Id", "X-Request-Id"],
 )
 
 @app.get("/health")
