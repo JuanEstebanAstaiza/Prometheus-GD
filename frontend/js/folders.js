@@ -107,7 +107,7 @@ class FoldersManager {
       treeContainer.innerHTML = '<div class="loading-state"><div class="spinner"></div><p>Cargando carpetas...</p></div>';
 
       const folders = await fetchWrapper.get(`/folders/dependencies/${dependencyId}/tree`);
-      this.foldersTree = folders;
+      this.folders = folders; // Guardar para uso posterior en renderTree()
 
       // Renderizar árbol
       if (folders && folders.length > 0) {
@@ -228,13 +228,21 @@ class FoldersManager {
   }
 
   /**
-   * Adjunta event listeners al árbol
+   * Adjunta event listeners al árbol (solo una vez)
    */
   attachTreeEventListeners() {
     const treeContainer = document.getElementById('foldersTree');
     if (!treeContainer) return;
 
-    // Delegación de eventos
+    // Verificar si ya se agregaron los listeners
+    if (treeContainer.dataset.listenersAttached === 'true') {
+      return;
+    }
+
+    // Marcar como listeners agregados
+    treeContainer.dataset.listenersAttached = 'true';
+
+    // Delegación de eventos (se ejecuta una sola vez)
     treeContainer.addEventListener('click', async (e) => {
       const target = e.target.closest('[data-action], .tree-toggle, .tree-item-label');
       if (!target) return;
@@ -249,6 +257,8 @@ class FoldersManager {
       } else if (action === 'delete') {
         await this.showDeleteFolderModal(folderId);
       } else if (target.classList.contains('tree-toggle')) {
+        e.preventDefault();
+        e.stopPropagation();
         this.toggleNode(folderId);
       } else if (target.classList.contains('tree-item-label')) {
         this.selectFolder(folderId);
@@ -286,8 +296,19 @@ class FoldersManager {
       this.expandedNodes.add(folderId);
     }
 
-    // Re-renderizar árbol
-    this.loadFolderTree(this.currentDependency);
+    // Re-renderizar árbol SIN recargar datos del backend
+    this.renderTree();
+  }
+  
+  /**
+   * Re-renderiza el árbol con los datos actuales
+   */
+  renderTree() {
+    const treeContainer = document.getElementById('foldersTree');
+    if (!treeContainer || !this.folders || this.folders.length === 0) return;
+    
+    treeContainer.innerHTML = this.renderTreeNode(this.folders);
+    // NO llamar attachTreeEventListeners aquí - ya está agregado una sola vez
   }
 
   /**

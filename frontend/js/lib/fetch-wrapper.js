@@ -204,10 +204,15 @@ class FetchWrapper {
 
     } catch (error) {
       // Si es timeout o error de red y es GET, reintentar con backoff exponencial
+      // NO reintentar en caso de ERR_INSUFFICIENT_RESOURCES
       const isIdempotent = options.method === 'GET';
-      const shouldRetry = isIdempotent && retryCount < this.maxRetries;
+      const isResourceError = error.message && error.message.includes('ERR_INSUFFICIENT_RESOURCES');
+      const shouldRetry = isIdempotent && 
+                          retryCount < this.maxRetries && 
+                          !isResourceError &&
+                          (error.message === 'Request timeout' || error.message === 'Failed to fetch');
 
-      if (shouldRetry && (error.message === 'Request timeout' || error.message === 'Failed to fetch')) {
+      if (shouldRetry) {
         const delay = this.retryDelay * Math.pow(2, retryCount);
         console.log(`Retrying request (${retryCount + 1}/${this.maxRetries}) after ${delay}ms...`);
         

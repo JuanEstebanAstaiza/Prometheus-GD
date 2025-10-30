@@ -101,7 +101,7 @@ class UI {
 
     // Crear modal
     const modal = document.createElement('div');
-    modal.className = 'modal';
+    modal.className = options.size === 'large' ? 'modal modal-large' : 'modal';
 
     // Header
     const header = document.createElement('div');
@@ -178,6 +178,16 @@ class UI {
   }
 
   /**
+   * Cierra el modal actual (el más reciente)
+   */
+  hideModal() {
+    const backdrop = document.querySelector('.modal-backdrop');
+    if (backdrop) {
+      this.closeModal(backdrop);
+    }
+  }
+
+  /**
    * Modal de confirmación
    */
   confirm(title, message, onConfirm) {
@@ -194,6 +204,13 @@ class UI {
         }
       ]
     });
+  }
+
+  /**
+   * Alias para confirm
+   */
+  showConfirm(title, message, onConfirm) {
+    return this.confirm(title, message, onConfirm);
   }
 
   /**

@@ -88,18 +88,18 @@ function getMenuItems(role) {
       description: 'Panel principal'
     },
     {
-      label: 'Archivos',
-      path: '/files',
-      icon: 'file',
-      roles: ['SUPER_ADMIN', 'ADMIN_DEP', 'WORKER', 'READER'],
-      description: 'Gestión de archivos'
-    },
-    {
       label: 'Carpetas',
       path: '/folders',
       icon: 'folder',
       roles: ['SUPER_ADMIN', 'ADMIN_DEP', 'WORKER'],
       description: 'Gestión de carpetas'
+    },
+    {
+      label: 'Archivos',
+      path: '/archivos',
+      icon: 'file-text',
+      roles: ['SUPER_ADMIN', 'ADMIN_DEP', 'WORKER', 'READER'],
+      description: 'Búsqueda y gestión de documentos'
     },
     {
       label: 'Usuarios',
@@ -401,10 +401,137 @@ function registerRoutes() {
     }
   }, { requireAuth: true });
 
-  // Files (todos los roles) - INTEGRADO CON folders.js
+  // Redirect de /files a /archivos para compatibilidad
   router.registerRoute('/files', async (params) => {
-    // Redirigir a /folders ya que la gestión de archivos está integrada ahí
-    router.navigateTo('/folders');
+    router.navigateTo('/archivos');
+  }, { requireAuth: true });
+
+  // Archivos (módulo independiente con buscador)
+  router.registerRoute('/archivos', async (params) => {
+    router.setPageTitle('Archivos');
+    router.updateActiveLink('/archivos');
+    
+    const mainContent = document.getElementById('mainContent');
+    if (mainContent) {
+      mainContent.innerHTML = `
+        <div class="page-header">
+          <div class="page-header-content">
+            <h1 class="page-title">Gestión de Archivos</h1>
+            <p class="page-description">Búsqueda y gestión centralizada de documentos</p>
+          </div>
+          <div class="page-actions">
+            <button class="btn btn-primary" id="uploadFileBtn">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="17 8 12 3 7 8"></polyline>
+                <line x1="12" y1="3" x2="12" y2="15"></line>
+              </svg>
+              Subir Archivo
+            </button>
+          </div>
+        </div>
+
+        <!-- Buscador y filtros -->
+        <div class="card" style="margin-bottom: 1.5rem;">
+          <div class="card-body">
+            <div class="search-filters">
+              <div class="search-box" style="flex: 1;">
+                <input 
+                  type="text" 
+                  id="fileSearch" 
+                  class="form-input" 
+                  placeholder="Buscar archivos por nombre, tipo, o contenido..."
+                  autocomplete="off"
+                >
+                <div class="autocomplete-results" id="autocompleteResults"></div>
+              </div>
+              
+              <button class="btn btn-secondary" id="toggleFiltersBtn">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+                </svg>
+                Filtros
+              </button>
+            </div>
+
+            <!-- Filtros avanzados (colapsables) -->
+            <div class="advanced-filters hidden" id="advancedFilters">
+              <div class="filters-grid">
+                <div class="form-group">
+                  <label class="form-label">Dependencia</label>
+                  <select id="filterDependency" class="form-input">
+                    <option value="">Todas</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label">Carpeta</label>
+                  <select id="filterFolder" class="form-input">
+                    <option value="">Todas</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label">Tipo de archivo</label>
+                  <select id="filterMimeType" class="form-input">
+                    <option value="">Todos</option>
+                    <option value="application/pdf">PDF</option>
+                    <option value="application/msword">Word</option>
+                    <option value="application/vnd.ms-excel">Excel</option>
+                    <option value="image/">Imágenes</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label">Subido por</label>
+                  <select id="filterUploadedBy" class="form-input">
+                    <option value="">Todos</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label">Incluir eliminados</label>
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="filterIncludeDeleted">
+                    <span>Mostrar archivos eliminados</span>
+                  </label>
+                </div>
+
+                <div class="form-group" style="display: flex; align-items: flex-end; gap: 0.5rem;">
+                  <button class="btn btn-primary" id="applyFiltersBtn">Aplicar Filtros</button>
+                  <button class="btn btn-secondary" id="clearFiltersBtn">Limpiar</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tabla de archivos -->
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Archivos</h3>
+            <div class="card-actions">
+              <span class="text-muted" id="filesCount">0 archivos</span>
+            </div>
+          </div>
+          <div class="card-body" style="padding: 0;">
+            <div id="filesTableContainer">
+              <div class="loading-state">
+                <div class="spinner"></div>
+                <p>Cargando archivos...</p>
+              </div>
+            </div>
+          </div>
+          <div class="card-footer">
+            <div class="pagination" id="filesPagination"></div>
+          </div>
+        </div>
+      `;
+      
+      // Cargar módulo de archivos
+      const { filesManager } = await import('./files.js');
+      await filesManager.init();
+    }
   }, { requireAuth: true });
 
   // Users (super admin y admin dep)

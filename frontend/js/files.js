@@ -1,866 +1,1220 @@
 /**
- * SGDI - Files Module
- * Gestión completa de archivos con anexos, versioning, upload/download
+ * Files Manager - Módulo independiente para gestión de archivos
+ * 
+ * Funcionalidades:
+ * - Búsqueda con autocompletado
+ * - Filtros avanzados
+ * - Subida de archivos con anexos
+ * - Descarga y eliminación
+ * - Gestión de versiones
  */
 
 import { fetchWrapper } from './lib/fetch-wrapper.js';
 import { auth } from './auth.js';
 import { ui } from './ui.js';
-import { validators } from './lib/validators.js';
 
 class FilesManager {
   constructor() {
-    this.currentFolder = null;
-    this.uploadRetries = 2;
-    this.maxFileSize = 200 * 1024 * 1024; // 200MB
-    this.largeFileThreshold = 25 * 1024 * 1024; // 25MB
-  }
-
-  /**
-   * Sanitiza nombre de archivo para carpeta de anexos
-   * Strip extension, normalize NFKD, remove non-alphanumeric except - and _, collapse spaces to _, max 60 chars
-   */
-  sanitizeFileName(filename) {
-    // Remover extensión
-    const nameWithoutExt = filename.replace(/\.[^/.]+$/, '');
-    
-    // Normalize to NFKD (decompose accents)
-    let sanitized = nameWithoutExt.normalize('NFKD');
-    
-    // Remove accents
-    sanitized = sanitized.replace(/[\u0300-\u036f]/g, '');
-    
-    // Keep only alphanumeric, hyphens, underscores
-    sanitized = sanitized.replace(/[^a-zA-Z0-9\-_ ]/g, '');
-    
-    // Collapse spaces to underscore
-    sanitized = sanitized.replace(/\s+/g, '_');
-    
-    // Collapse multiple underscores
-    sanitized = sanitized.replace(/_+/g, '_');
-    
-    // Trim underscores
-    sanitized = sanitized.replace(/^_+|_+$/g, '');
-    
-    // Max length 60
-    sanitized = sanitized.substring(0, 60);
-    
-    return sanitized;
-  }
-
-  /**
-   * Genera nombre de carpeta de anexos
-   */
-  generateAnnexFolderName(mainFileName) {
-    const sanitized = this.sanitizeFileName(mainFileName);
-    const now = new Date();
-    const dateStr = now.getFullYear() + 
-                    String(now.getMonth() + 1).padStart(2, '0') + 
-                    String(now.getDate()).padStart(2, '0');
-    
-    return `Anexos-${sanitized}-${dateStr}`;
-  }
-
-  /**
-   * Muestra modal de upload
-   */
-  showUploadModal(folderId) {
-    if (!folderId) {
-      ui.error('Selecciona una carpeta primero');
-      return;
-    }
-
-    this.currentFolder = folderId;
-
-    const content = document.createElement('div');
-    content.innerHTML = `
-      <form id="uploadForm" enctype="multipart/form-data">
-        <!-- Archivo principal -->
-        <div class="form-group">
-          <label for="mainFile" class="form-label">Archivo Principal *</label>
-          <div class="file-upload-zone" id="mainFileZone">
-            <svg width="48" height="48" fill="currentColor" viewBox="0 0 20 20" style="color: var(--color-gray-400); margin: 0 auto;">
-              <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
-            </svg>
-            <p style="margin-top: 1rem; font-weight: 500;">Arrastra o haz clic para seleccionar</p>
-            <p style="font-size: 0.875rem; color: var(--color-gray-600);">Máximo 200MB</p>
-          </div>
-          <input type="file" id="mainFile" style="display: none;" required>
-          <div id="mainFilePreview" class="file-preview hidden"></div>
-        </div>
-
-        <!-- Checkbox anexos -->
-        <div class="form-group">
-          <label class="checkbox-label">
-            <input type="checkbox" id="hasAnnexes">
-            <span>¿Tiene anexos?</span>
-          </label>
-        </div>
-
-        <!-- Anexos (hidden inicialmente) -->
-        <div id="annexesSection" class="form-group hidden">
-          <label for="annexFiles" class="form-label">Archivos Anexos</label>
-          <input type="file" id="annexFiles" class="form-input" multiple>
-          <p class="text-muted" style="font-size: 0.875rem; margin-top: 0.5rem;">
-            Puedes seleccionar múltiples archivos
-          </p>
-          <div id="annexesPreview" class="file-preview hidden"></div>
-        </div>
-
-        <!-- Nombre de carpeta de anexos (hidden inicialmente) -->
-        <div id="annexFolderSection" class="form-group hidden">
-          <label for="annexFolderName" class="form-label">Nombre de Carpeta de Anexos</label>
-          <input type="text" id="annexFolderName" class="form-input" placeholder="Anexos-Nombre-YYYYMMDD">
-          <p class="text-muted" style="font-size: 0.875rem; margin-top: 0.5rem;">
-            Se creará automáticamente para organizar los anexos
-          </p>
-        </div>
-
-        <!-- Metadata -->
-        <div class="form-group">
-          <label for="docNumber" class="form-label">Número de Documento</label>
-          <input type="text" id="docNumber" class="form-input" placeholder="Ej: 2025-001">
-        </div>
-
-        <div class="form-group">
-          <label for="tags" class="form-label">Etiquetas</label>
-          <input type="text" id="tags" class="form-input" placeholder="etiqueta1, etiqueta2, etiqueta3">
-          <p class="text-muted" style="font-size: 0.875rem; margin-top: 0.5rem;">
-            Separadas por comas
-          </p>
-        </div>
-
-        <div class="form-group">
-          <label for="observations" class="form-label">Observaciones</label>
-          <textarea id="observations" class="form-input" rows="3" placeholder="Notas adicionales..."></textarea>
-        </div>
-
-        <!-- Progress (hidden inicialmente) -->
-        <div id="uploadProgress" class="hidden" style="margin-top: 1rem;">
-          <div style="margin-bottom: 0.5rem;">
-            <strong>Subiendo...</strong>
-            <span id="uploadPercentage" style="float: right;">0%</span>
-          </div>
-          <div class="progress">
-            <div class="progress-bar" id="uploadProgressBar" style="width: 0%;"></div>
-          </div>
-          <p id="uploadStatus" class="text-muted" style="font-size: 0.875rem; margin-top: 0.5rem;"></p>
-        </div>
-      </form>
-    `;
-
-    const modal = ui.showModal('Subir Archivo', content, {
-      buttons: [
-        {
-          text: 'Cancelar',
-          class: 'btn btn-secondary',
-          onClick: () => {
-            // Verificar si hay upload en progreso
-            const progressDiv = document.getElementById('uploadProgress');
-            if (progressDiv && !progressDiv.classList.contains('hidden')) {
-              if (!confirm('¿Cancelar la subida en progreso?')) {
-                return false; // No cerrar
-              }
-            }
-          }
-        },
-        {
-          text: 'Subir',
-          class: 'btn btn-primary',
-          onClick: async () => {
-            await this.handleUpload();
-          },
-          closeOnClick: false
-        }
-      ]
-    });
-
-    // Setup event listeners
-    this.setupUploadModalListeners(modal);
-  }
-
-  /**
-   * Configura listeners del modal de upload
-   */
-  setupUploadModalListeners(modal) {
-    const mainFileZone = document.getElementById('mainFileZone');
-    const mainFileInput = document.getElementById('mainFile');
-    const hasAnnexesCheck = document.getElementById('hasAnnexes');
-    const annexesSection = document.getElementById('annexesSection');
-    const annexFolderSection = document.getElementById('annexFolderSection');
-    const annexFilesInput = document.getElementById('annexFiles');
-
-    // Drag & drop para archivo principal
-    mainFileZone.addEventListener('click', () => mainFileInput.click());
-
-    mainFileZone.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      mainFileZone.classList.add('dragging');
-    });
-
-    mainFileZone.addEventListener('dragleave', () => {
-      mainFileZone.classList.remove('dragging');
-    });
-
-    mainFileZone.addEventListener('drop', (e) => {
-      e.preventDefault();
-      mainFileZone.classList.remove('dragging');
-      
-      if (e.dataTransfer.files.length > 0) {
-        mainFileInput.files = e.dataTransfer.files;
-        this.updateMainFilePreview(mainFileInput.files[0]);
-      }
-    });
-
-    // Cambio de archivo principal
-    mainFileInput.addEventListener('change', (e) => {
-      if (e.target.files.length > 0) {
-        this.updateMainFilePreview(e.target.files[0]);
-      }
-    });
-
-    // Toggle anexos
-    hasAnnexesCheck.addEventListener('change', (e) => {
-      if (e.target.checked) {
-        annexesSection.classList.remove('hidden');
-        annexFolderSection.classList.remove('hidden');
-      } else {
-        annexesSection.classList.add('hidden');
-        annexFolderSection.classList.add('hidden');
-        annexFilesInput.value = '';
-        document.getElementById('annexesPreview').classList.add('hidden');
-      }
-    });
-
-    // Cambio de anexos
-    annexFilesInput.addEventListener('change', (e) => {
-      if (e.target.files.length > 0) {
-        this.updateAnnexesPreview(e.target.files);
-      }
-    });
-  }
-
-  /**
-   * Actualiza preview del archivo principal
-   */
-  updateMainFilePreview(file) {
-    const preview = document.getElementById('mainFilePreview');
-    const zone = document.getElementById('mainFileZone');
-    const annexFolderInput = document.getElementById('annexFolderName');
-
-    if (!file) return;
-
-    // Validar tamaño
-    if (file.size > this.maxFileSize) {
-      ui.error(`El archivo es demasiado grande (máximo ${this.maxFileSize / (1024 * 1024)}MB)`);
-      document.getElementById('mainFile').value = '';
-      return;
-    }
-
-    // Advertencia para archivos grandes
-    if (file.size > this.largeFileThreshold) {
-      ui.warning(`⚠️ Archivo grande (${ui.formatBytes(file.size)}). La subida puede tardar varios minutos.`);
-    }
-
-    zone.style.display = 'none';
-    preview.classList.remove('hidden');
-    preview.innerHTML = `
-      <div style="display: flex; align-items: center; gap: 1rem; padding: 1rem; background: var(--color-gray-50); border-radius: var(--radius-md);">
-        <svg width="32" height="32" fill="currentColor" viewBox="0 0 20 20" style="color: var(--color-primary-500); flex-shrink: 0;">
-          <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clip-rule="evenodd"/>
-        </svg>
-        <div style="flex: 1; min-width: 0;">
-          <div style="font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${this.escapeHtml(file.name)}</div>
-          <div style="font-size: 0.875rem; color: var(--color-gray-600);">
-            ${ui.formatBytes(file.size)} • ${file.type || 'application/octet-stream'}
-          </div>
-        </div>
-        <button type="button" class="btn btn-sm btn-secondary" onclick="document.getElementById('mainFile').value=''; document.getElementById('mainFileZone').style.display=''; this.parentElement.parentElement.classList.add('hidden');">
-          Cambiar
-        </button>
-      </div>
-    `;
-
-    // Generar nombre de carpeta de anexos
-    if (annexFolderInput && document.getElementById('hasAnnexes').checked) {
-      annexFolderInput.value = this.generateAnnexFolderName(file.name);
-    }
-  }
-
-  /**
-   * Actualiza preview de anexos
-   */
-  updateAnnexesPreview(files) {
-    const preview = document.getElementById('annexesPreview');
-    const annexFolderInput = document.getElementById('annexFolderName');
-    const mainFileInput = document.getElementById('mainFile');
-
-    if (!files || files.length === 0) return;
-
-    preview.classList.remove('hidden');
-    
-    let totalSize = 0;
-    const filesList = Array.from(files).map(file => {
-      totalSize += file.size;
-      return `
-        <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem; background: var(--color-gray-50); border-radius: var(--radius-sm); font-size: 0.875rem;">
-          <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20" style="color: var(--color-gray-500); flex-shrink: 0;">
-            <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clip-rule="evenodd"/>
-          </svg>
-          <span style="flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${this.escapeHtml(file.name)}</span>
-          <span style="color: var(--color-gray-600);">${ui.formatBytes(file.size)}</span>
-        </div>
-      `;
-    }).join('');
-
-    preview.innerHTML = `
-      <div style="padding: 1rem; background: var(--color-blue-50); border: 1px solid var(--color-blue-200); border-radius: var(--radius-md);">
-        <div style="font-weight: 600; margin-bottom: 0.5rem;">
-          ${files.length} anexo(s) • ${ui.formatBytes(totalSize)}
-        </div>
-        <div style="display: flex; flex-direction: column; gap: 0.5rem;">
-          ${filesList}
-        </div>
-      </div>
-    `;
-
-    // Actualizar nombre de carpeta si no ha sido editado manualmente
-    if (annexFolderInput && mainFileInput.files.length > 0) {
-      const currentValue = annexFolderInput.value;
-      const expectedValue = this.generateAnnexFolderName(mainFileInput.files[0].name);
-      
-      // Solo actualizar si parece ser el valor auto-generado
-      if (!currentValue || currentValue.startsWith('Anexos-')) {
-        annexFolderInput.value = expectedValue;
-      }
-    }
-  }
-
-  /**
-   * Maneja el proceso de upload
-   */
-  async handleUpload() {
-    const mainFileInput = document.getElementById('mainFile');
-    const hasAnnexes = document.getElementById('hasAnnexes').checked;
-    const annexFilesInput = document.getElementById('annexFiles');
-    const docNumber = document.getElementById('docNumber').value.trim();
-    const tags = document.getElementById('tags').value.trim();
-    const observations = document.getElementById('observations').value.trim();
-    const annexFolderName = document.getElementById('annexFolderName').value.trim();
-
-    // Validar
-    if (!mainFileInput.files || mainFileInput.files.length === 0) {
-      ui.error('Selecciona un archivo principal');
-      return;
-    }
-
-    if (hasAnnexes && (!annexFilesInput.files || annexFilesInput.files.length === 0)) {
-      ui.error('Selecciona al menos un anexo o desmarca la opción "¿Tiene anexos?"');
-      return;
-    }
-
-    if (hasAnnexes && !annexFolderName) {
-      ui.error('Especifica el nombre de la carpeta de anexos');
-      return;
-    }
-
-    // Preparar FormData
-    const formData = new FormData();
-    formData.append('file', mainFileInput.files[0]);
-    formData.append('folder_id', this.currentFolder);
-
-    // Anexos
-    if (hasAnnexes) {
-      for (let i = 0; i < annexFilesInput.files.length; i++) {
-        formData.append('anexos', annexFilesInput.files[i]);
-      }
-      formData.append('annex_folder_name', annexFolderName);
-    }
-
-    // Metadata
-    const metadata = {
-      doc_number: docNumber || null,
-      tags: tags ? tags.split(',').map(t => t.trim()).filter(t => t) : [],
-      observations: observations || null
+    this.files = [];
+    this.dependencies = [];
+    this.folders = [];
+    this.users = [];
+    this.currentFilters = {
+      search: '',
+      dependency_id: '',
+      folder_id: '',
+      mime_type: '',
+      uploaded_by: '',
+      is_deleted: false
     };
-    formData.append('metadata', JSON.stringify(metadata));
-
-    // Upload con progreso
-    await this.uploadWithProgress(formData);
+    this.currentPage = 0;
+    this.pageSize = 20;
+    this.total = 0;
+    this.searchTimeout = null;
   }
 
   /**
-   * Upload con barra de progreso y reintentos
+   * Inicializa el módulo de archivos
    */
-  async uploadWithProgress(formData, retryCount = 0) {
-    const progressDiv = document.getElementById('uploadProgress');
-    const progressBar = document.getElementById('uploadProgressBar');
-    const percentage = document.getElementById('uploadPercentage');
-    const status = document.getElementById('uploadStatus');
-
-    // Mostrar progreso
-    progressDiv.classList.remove('hidden');
-    status.textContent = retryCount > 0 ? `Reintentando (${retryCount}/${this.uploadRetries})...` : 'Preparando subida...';
-
+  async init() {
+    console.log('[files.js] Inicializando módulo de archivos...');
+    
     try {
-      const result = await fetchWrapper.upload('/files/upload', formData, (percent) => {
-        progressBar.style.width = `${percent}%`;
-        percentage.textContent = `${percent}%`;
-        
-        if (percent < 100) {
-          status.textContent = 'Subiendo archivos...';
-        } else {
-          status.textContent = 'Procesando en el servidor...';
-        }
+      // Cargar datos iniciales
+      await Promise.all([
+        this.loadDependencies(),
+        this.loadUsers(),
+        this.loadFiles()
+      ]);
+
+      // Configurar event listeners
+      this.setupEventListeners();
+
+      console.log('[files.js] Módulo de archivos inicializado correctamente');
+    } catch (error) {
+      console.error('[files.js] Error al inicializar:', error);
+      ui.error('Error al cargar el módulo de archivos');
+    }
+  }
+
+  /**
+   * Configura los event listeners
+   */
+  setupEventListeners() {
+    // Buscador con autocomplete
+    const searchInput = document.getElementById('fileSearch');
+    if (searchInput) {
+      searchInput.addEventListener('input', (e) => {
+        this.handleSearch(e.target.value);
       });
 
-      // Éxito completo
-      progressDiv.classList.add('hidden');
+      // Cerrar autocomplete al hacer clic fuera
+      document.addEventListener('click', (e) => {
+        if (!searchInput.contains(e.target)) {
+          this.hideAutocomplete();
+        }
+      });
+    }
+
+    // Toggle filtros avanzados
+    const toggleFiltersBtn = document.getElementById('toggleFiltersBtn');
+    if (toggleFiltersBtn) {
+      toggleFiltersBtn.addEventListener('click', () => {
+        const advancedFilters = document.getElementById('advancedFilters');
+        if (advancedFilters) {
+          advancedFilters.classList.toggle('hidden');
+        }
+      });
+    }
+
+    // Aplicar filtros
+    const applyFiltersBtn = document.getElementById('applyFiltersBtn');
+    if (applyFiltersBtn) {
+      applyFiltersBtn.addEventListener('click', () => {
+        this.applyFilters();
+      });
+    }
+
+    // Limpiar filtros
+    const clearFiltersBtn = document.getElementById('clearFiltersBtn');
+    if (clearFiltersBtn) {
+      clearFiltersBtn.addEventListener('click', () => {
+        this.clearFilters();
+      });
+    }
+
+    // Botón de subir archivo
+    const uploadFileBtn = document.getElementById('uploadFileBtn');
+    if (uploadFileBtn) {
+      uploadFileBtn.addEventListener('click', () => {
+        this.showUploadModal();
+      });
+    }
+  }
+
+  /**
+   * Maneja la búsqueda con debounce
+   */
+  handleSearch(searchTerm) {
+    // Limpiar timeout anterior
+    if (this.searchTimeout) {
+      clearTimeout(this.searchTimeout);
+    }
+
+    // Si está vacío, ocultar autocomplete y recargar archivos
+    if (!searchTerm || searchTerm.trim() === '') {
+      this.hideAutocomplete();
+      this.currentFilters.search = '';
+      this.loadFiles();
+      return;
+    }
+
+    // Debounce: esperar 300ms antes de buscar
+    this.searchTimeout = setTimeout(async () => {
+      this.currentFilters.search = searchTerm.trim();
       
-      const annexCount = result.annexes ? result.annexes.length : 0;
-      const message = annexCount > 0 
-        ? `Archivo y ${annexCount} anexo(s) subidos correctamente`
-        : 'Archivo subido correctamente';
+      try {
+        // Buscar archivos
+        await this.loadFiles();
+        
+        // Mostrar resultados en autocomplete
+        this.showAutocomplete(this.files);
+      } catch (error) {
+        console.error('[files.js] Error en búsqueda:', error);
+      }
+    }, 300);
+  }
 
-      ui.success(message);
+  /**
+   * Muestra el autocomplete con los resultados
+   */
+  showAutocomplete(files) {
+    const autocompleteResults = document.getElementById('autocompleteResults');
+    if (!autocompleteResults) return;
 
-      // Mostrar detalles si hay carpeta de anexos
-      if (result.annex_folder) {
-        ui.showModal('Upload Exitoso', `
-          <div>
-            <p style="margin-bottom: 1rem;">✅ ${message}</p>
-            <div style="background: var(--color-gray-50); padding: 1rem; border-radius: var(--radius-md);">
-              <div><strong>Archivo principal:</strong> ${this.escapeHtml(result.file.original_name)}</div>
-              <div><strong>Carpeta de anexos:</strong> ${this.escapeHtml(result.annex_folder.name)}</div>
-              ${annexCount > 0 ? `
-                <div style="margin-top: 0.5rem;"><strong>Anexos incluidos:</strong></div>
-                <ul style="margin-left: 1.5rem; margin-top: 0.5rem;">
-                  ${result.annexes.map(a => `<li>${this.escapeHtml(a.original_name)}</li>`).join('')}
-                </ul>
-              ` : ''}
-            </div>
-          </div>
-        `, {
-          buttons: [{ text: 'Cerrar', class: 'btn btn-primary' }]
+    if (files.length === 0) {
+      autocompleteResults.innerHTML = `
+        <div class="autocomplete-item">
+          <div class="autocomplete-item-title">No se encontraron archivos</div>
+        </div>
+      `;
+      autocompleteResults.classList.add('show');
+      return;
+    }
+
+    // Mostrar solo los primeros 5 resultados en el autocomplete
+    const limitedFiles = files.slice(0, 5);
+    
+    autocompleteResults.innerHTML = limitedFiles.map(file => `
+      <div class="autocomplete-item" data-file-id="${file.id}">
+        <div class="autocomplete-item-title">${this.escapeHtml(file.original_name || file.name)}</div>
+        <div class="autocomplete-item-meta">
+          ${this.formatBytes(file.size_bytes || 0)} • 
+          ${new Date(file.created_at).toLocaleDateString()} • 
+          ${this.escapeHtml(file.folder_path || 'Sin carpeta')}
+        </div>
+      </div>
+    `).join('');
+
+    // Agregar event listeners a los items
+    autocompleteResults.querySelectorAll('.autocomplete-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const fileId = item.dataset.fileId;
+        this.showFileDetails(fileId);
+        this.hideAutocomplete();
+      });
+    });
+
+    autocompleteResults.classList.add('show');
+  }
+
+  /**
+   * Oculta el autocomplete
+   */
+  hideAutocomplete() {
+    const autocompleteResults = document.getElementById('autocompleteResults');
+    if (autocompleteResults) {
+      autocompleteResults.classList.remove('show');
+    }
+  }
+
+  /**
+   * Carga las dependencias
+   */
+  async loadDependencies() {
+    try {
+      const response = await fetchWrapper.get('/dependencies');
+      this.dependencies = response.items || response || [];
+
+      // Llenar select de filtro
+      const filterDependency = document.getElementById('filterDependency');
+      if (filterDependency) {
+        filterDependency.innerHTML = '<option value="">Todas</option>' +
+          this.dependencies.map(dep => `
+            <option value="${dep.id}">${this.escapeHtml(dep.name)}</option>
+          `).join('');
+      }
+    } catch (error) {
+      console.error('[files.js] Error loading dependencies:', error);
+      this.dependencies = [];
+    }
+  }
+
+  /**
+   * Carga los usuarios
+   */
+  async loadUsers() {
+    try {
+      const response = await fetchWrapper.get('/users?limit=1000');
+      if (Array.isArray(response)) {
+        this.users = response;
+      } else if (response && Array.isArray(response.items)) {
+        this.users = response.items;
+      } else if (response && Array.isArray(response.users)) {
+        this.users = response.users;
+      } else {
+        this.users = [];
+      }
+
+      // Llenar select de filtro
+      const filterUploadedBy = document.getElementById('filterUploadedBy');
+      if (filterUploadedBy) {
+        filterUploadedBy.innerHTML = '<option value="">Todos</option>' +
+          this.users.map(user => `
+            <option value="${user.id}">${this.escapeHtml(user.full_name)}</option>
+          `).join('');
+      }
+    } catch (error) {
+      console.error('[files.js] Error loading users:', error);
+      this.users = [];
+    }
+  }
+
+  /**
+   * Carga los archivos con filtros
+   */
+  async loadFiles() {
+    try {
+      console.log('[files.js] Cargando archivos con filtros:', this.currentFilters);
+
+      // Construir parámetros de búsqueda
+      const params = new URLSearchParams({
+        skip: this.currentPage * this.pageSize,
+        limit: this.pageSize
+      });
+
+      if (this.currentFilters.search) {
+        // Nota: El backend no tiene parámetro 'q', pero podemos buscar por nombre usando los filtros existentes
+        // Por ahora, cargaremos todos y filtraremos en cliente
+        params.append('limit', '1000');
+      }
+      if (this.currentFilters.dependency_id) {
+        params.append('dependency_id', this.currentFilters.dependency_id);
+      }
+      if (this.currentFilters.folder_id) {
+        params.append('folder_id', this.currentFilters.folder_id);
+      }
+      if (this.currentFilters.mime_type) {
+        params.append('mime_type', this.currentFilters.mime_type);
+      }
+      if (this.currentFilters.uploaded_by) {
+        params.append('uploaded_by', this.currentFilters.uploaded_by);
+      }
+      if (this.currentFilters.is_deleted) {
+        params.append('is_deleted', 'true');
+      }
+
+      const response = await fetchWrapper.get(`/files?${params.toString()}`);
+      
+      let allFiles = response.items || response || [];
+      
+      // Filtrar por término de búsqueda en cliente (hasta que el backend lo soporte)
+      if (this.currentFilters.search) {
+        const searchLower = this.currentFilters.search.toLowerCase();
+        allFiles = allFiles.filter(file => {
+          const name = (file.original_name || file.name || '').toLowerCase();
+          const mimeType = (file.mime_type || '').toLowerCase();
+          return name.includes(searchLower) || mimeType.includes(searchLower);
         });
       }
 
-      // Cerrar modal de upload
-      const uploadModal = document.querySelector('.modal-backdrop');
-      if (uploadModal) ui.closeModal(uploadModal);
+      this.files = allFiles;
+      this.total = allFiles.length;
 
-      // Recargar lista de archivos (si existe)
-      if (typeof this.loadFiles === 'function') {
-        await this.loadFiles(this.currentFolder);
-      }
+      this.renderFilesTable();
+      this.updateFilesCount();
 
     } catch (error) {
-      console.error('Upload error:', error);
-
-      // Verificar si es error de red y podemos reintentar
-      const isNetworkError = error.message === 'Upload failed: Network error' || 
-                             error.message === 'Upload timeout';
-
-      if (isNetworkError && retryCount < this.uploadRetries) {
-        // Esperar con backoff exponencial
-        const delay = Math.pow(2, retryCount) * 1000;
-        status.textContent = `Error de red. Reintentando en ${delay / 1000}s...`;
-        
-        await new Promise(resolve => setTimeout(resolve, delay));
-        
-        // Reintentar
-        return await this.uploadWithProgress(formData, retryCount + 1);
-      }
-
-      // Error definitivo
-      progressDiv.classList.add('hidden');
-
-      // Verificar si es éxito parcial
-      if (error.status === 207 || error.data?.partial_success) {
-        this.handlePartialSuccess(error.data);
-      } else {
-        const requestId = error.data?.request_id;
-        ui.error(`Error al subir archivo${requestId ? ` (ID: ${requestId})` : ''}`);
-      }
+      console.error('[files.js] Error loading files:', error);
+      ui.error('Error al cargar archivos');
+      this.files = [];
+      this.total = 0;
+      this.renderFilesTable();
     }
   }
 
   /**
-   * Maneja éxito parcial (main subido pero anexos fallaron)
+   * Renderiza la tabla de archivos
    */
-  handlePartialSuccess(data) {
-    const mainFile = data.file;
-    const successAnnexes = data.annexes_success || [];
-    const failedAnnexes = data.annexes_failed || [];
+  renderFilesTable() {
+    const container = document.getElementById('filesTableContainer');
+    if (!container) return;
 
-    const content = document.createElement('div');
-    content.innerHTML = `
-      <div>
-        <div style="margin-bottom: 1rem; padding: 1rem; background: var(--color-warning-50); border: 1px solid var(--color-warning-200); border-radius: var(--radius-md);">
-          <strong>⚠️ Subida parcial</strong>
-          <p style="margin-top: 0.5rem; margin-bottom: 0;">El archivo principal se subió correctamente, pero algunos anexos fallaron.</p>
+    if (this.files.length === 0) {
+      container.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-state-icon">📄</div>
+          <h3 class="empty-state-title">No se encontraron archivos</h3>
+          <p class="empty-state-description">
+            ${this.currentFilters.search ? 
+              'Intenta con otros términos de búsqueda' : 
+              'Sube tu primer archivo para comenzar'}
+          </p>
         </div>
+      `;
+      return;
+    }
 
-        <div style="margin-bottom: 1rem;">
-          <h4 style="margin-bottom: 0.5rem;">✅ Archivo Principal</h4>
-          <div style="padding: 0.75rem; background: var(--color-gray-50); border-radius: var(--radius-md);">
-            ${this.escapeHtml(mainFile.original_name)}
-          </div>
-        </div>
-
-        ${successAnnexes.length > 0 ? `
-          <div style="margin-bottom: 1rem;">
-            <h4 style="margin-bottom: 0.5rem;">✅ Anexos Exitosos (${successAnnexes.length})</h4>
-            <ul style="margin-left: 1.5rem;">
-              ${successAnnexes.map(a => `<li>${this.escapeHtml(a.original_name)}</li>`).join('')}
-            </ul>
-          </div>
-        ` : ''}
-
-        ${failedAnnexes.length > 0 ? `
-          <div style="margin-bottom: 1rem;">
-            <h4 style="margin-bottom: 0.5rem; color: var(--color-danger);">❌ Anexos Fallidos (${failedAnnexes.length})</h4>
-            <ul style="margin-left: 1.5rem;">
-              ${failedAnnexes.map(a => `<li>${this.escapeHtml(a.name)} - ${this.escapeHtml(a.error)}</li>`).join('')}
-            </ul>
-          </div>
-        ` : ''}
-
-        <p class="text-muted" style="font-size: 0.875rem;">
-          ¿Qué deseas hacer?
-        </p>
-      </div>
+    container.innerHTML = `
+      <table class="table">
+        <thead>
+          <tr>
+            <th style="width: 40%;">Nombre</th>
+            <th style="width: 15%;">Tipo</th>
+            <th style="width: 10%;">Tamaño</th>
+            <th style="width: 15%;">Subido por</th>
+            <th style="width: 10%;">Fecha</th>
+            <th style="width: 10%;">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${this.files.map(file => this.renderFileRow(file)).join('')}
+        </tbody>
+      </table>
     `;
+  }
 
-    ui.showModal('Subida Parcial', content, {
-      buttons: [
-        {
-          text: 'Reintentar Anexos',
-          class: 'btn btn-primary',
-          onClick: async () => {
-            await this.retryFailedAnnexes(mainFile.id, failedAnnexes);
+  /**
+   * Renderiza una fila de archivo
+   */
+  renderFileRow(file) {
+    const isDeleted = file.is_deleted || false;
+    const fileIcon = this.getFileIcon(file.mime_type);
+    
+    return `
+      <tr class="${isDeleted ? 'text-muted' : ''}">
+        <td>
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            ${fileIcon}
+            <div>
+              <div class="font-weight-600">${this.escapeHtml(file.original_name || file.name)}</div>
+              ${file.is_annex ? '<span class="badge badge-info">Anexo</span>' : ''}
+              ${isDeleted ? '<span class="badge badge-danger">Eliminado</span>' : ''}
+            </div>
+          </div>
+        </td>
+        <td>${this.escapeHtml(this.getMimeTypeLabel(file.mime_type))}</td>
+        <td>${this.formatBytes(file.size_bytes || 0)}</td>
+        <td>${this.escapeHtml(file.uploaded_by_name || 'N/A')}</td>
+        <td>${new Date(file.created_at).toLocaleDateString()}</td>
+        <td>
+          <div style="display: flex; gap: 0.25rem;">
+            <button 
+              class="btn btn-sm btn-secondary" 
+              onclick="filesManager.downloadFile('${file.id}', '${this.escapeHtml(file.original_name || file.name)}')"
+              title="Descargar"
+            >
+              ⬇
+            </button>
+            ${!isDeleted ? `
+              <button 
+                class="btn btn-sm btn-danger" 
+                onclick="filesManager.deleteFile('${file.id}')"
+                title="Eliminar"
+              >
+                🗑
+              </button>
+            ` : ''}
+            <button 
+              class="btn btn-sm btn-secondary" 
+              onclick="filesManager.showFileDetails('${file.id}')"
+              title="Detalles"
+            >
+              ℹ
+            </button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }
+
+  /**
+   * Obtiene el icono según el tipo MIME
+   */
+  getFileIcon(mimeType) {
+    if (!mimeType) return '📄';
+    
+    if (mimeType.startsWith('image/')) return '🖼️';
+    if (mimeType.includes('pdf')) return '📕';
+    if (mimeType.includes('word') || mimeType.includes('document')) return '📘';
+    if (mimeType.includes('excel') || mimeType.includes('spreadsheet')) return '📗';
+    if (mimeType.includes('powerpoint') || mimeType.includes('presentation')) return '📙';
+    if (mimeType.includes('zip') || mimeType.includes('rar') || mimeType.includes('7z')) return '📦';
+    if (mimeType.startsWith('video/')) return '🎬';
+    if (mimeType.startsWith('audio/')) return '🎵';
+    
+    return '📄';
+  }
+
+  /**
+   * Obtiene la etiqueta legible del tipo MIME
+   */
+  getMimeTypeLabel(mimeType) {
+    if (!mimeType) return 'Desconocido';
+    
+    const labels = {
+      'application/pdf': 'PDF',
+      'application/msword': 'Word',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'Word',
+      'application/vnd.ms-excel': 'Excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'Excel',
+      'image/jpeg': 'JPEG',
+      'image/png': 'PNG',
+      'image/gif': 'GIF',
+      'text/plain': 'Texto'
+    };
+    
+    return labels[mimeType] || mimeType.split('/')[1]?.toUpperCase() || 'Archivo';
+  }
+
+  /**
+   * Actualiza el contador de archivos
+   */
+  updateFilesCount() {
+    const filesCount = document.getElementById('filesCount');
+    if (filesCount) {
+      filesCount.textContent = `${this.total} archivo${this.total !== 1 ? 's' : ''}`;
+    }
+  }
+
+  /**
+   * Aplica los filtros seleccionados
+   */
+  applyFilters() {
+    const filterDependency = document.getElementById('filterDependency');
+    const filterFolder = document.getElementById('filterFolder');
+    const filterMimeType = document.getElementById('filterMimeType');
+    const filterUploadedBy = document.getElementById('filterUploadedBy');
+    const filterIncludeDeleted = document.getElementById('filterIncludeDeleted');
+
+    this.currentFilters.dependency_id = filterDependency?.value || '';
+    this.currentFilters.folder_id = filterFolder?.value || '';
+    this.currentFilters.mime_type = filterMimeType?.value || '';
+    this.currentFilters.uploaded_by = filterUploadedBy?.value || '';
+    this.currentFilters.is_deleted = filterIncludeDeleted?.checked || false;
+
+    this.currentPage = 0;
+    this.loadFiles();
+
+    ui.success('Filtros aplicados');
+  }
+
+  /**
+   * Limpia todos los filtros
+   */
+  clearFilters() {
+    // Limpiar filtros
+    this.currentFilters = {
+      search: '',
+      dependency_id: '',
+      folder_id: '',
+      mime_type: '',
+      uploaded_by: '',
+      is_deleted: false
+    };
+
+    // Limpiar inputs
+    const searchInput = document.getElementById('fileSearch');
+    if (searchInput) searchInput.value = '';
+
+    const filterDependency = document.getElementById('filterDependency');
+    if (filterDependency) filterDependency.value = '';
+
+    const filterFolder = document.getElementById('filterFolder');
+    if (filterFolder) filterFolder.value = '';
+
+    const filterMimeType = document.getElementById('filterMimeType');
+    if (filterMimeType) filterMimeType.value = '';
+
+    const filterUploadedBy = document.getElementById('filterUploadedBy');
+    if (filterUploadedBy) filterUploadedBy.value = '';
+
+    const filterIncludeDeleted = document.getElementById('filterIncludeDeleted');
+    if (filterIncludeDeleted) filterIncludeDeleted.checked = false;
+
+    this.currentPage = 0;
+    this.loadFiles();
+
+    ui.success('Filtros limpiados');
+  }
+
+  /**
+   * Muestra el modal de subida de archivo
+   */
+  async showUploadModal(folderId = null) {
+    try {
+      console.log('[files.js] showUploadModal iniciado');
+      
+      // Mostrar loading mientras cargamos las carpetas
+      ui.showLoading('Cargando carpetas disponibles...');
+      
+      // Cargar carpetas para el selector ANTES de crear el modal
+      await this.loadFoldersForUpload();
+      
+      ui.hideLoading();
+      
+      console.log('[files.js] Carpetas cargadas, creando modal con', this.folders.length, 'carpetas');
+
+      const content = document.createElement('div');
+      
+      // Generar las opciones del selector AHORA que ya tenemos las carpetas
+      let folderOptions = '<option value="">Seleccionar carpeta...</option>';
+      if (this.folders && this.folders.length > 0) {
+        folderOptions += this.folders.map(folder => `
+          <option value="${folder.id}">${this.escapeHtml(folder.dependency_name)} → ${this.escapeHtml(folder.path)}</option>
+        `).join('');
+      } else {
+        folderOptions = '<option value="">No hay carpetas disponibles</option>';
+      }
+      
+      content.innerHTML = `
+        <form id="uploadFileForm" enctype="multipart/form-data">
+          <!-- Archivo principal -->
+          <div class="form-group">
+            <label class="form-label">Archivo Principal *</label>
+            <input 
+              type="file" 
+              id="mainFile" 
+              class="form-input" 
+              required
+              accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif"
+            >
+            <small class="form-help">Tamaño máximo: 200MB</small>
+          </div>
+
+          <!-- Selector de carpeta -->
+          <div class="form-group">
+            <label class="form-label">Carpeta Destino *</label>
+            <select id="uploadFolderId" class="form-input" required>
+              ${folderOptions}
+            </select>
+          </div>
+
+          <!-- Checkbox para anexos -->
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="enableAnnexes">
+              <span>Adjuntar anexos</span>
+            </label>
+            <small class="form-help">Los anexos se guardarán en una subcarpeta automática</small>
+          </div>
+
+          <!-- Anexos (oculto por defecto) -->
+          <div id="annexesSection" class="hidden" style="margin-top: 1rem; padding: 1rem; background: #f9fafb; border-radius: 8px;">
+            <div class="form-group">
+              <label class="form-label">Archivos Anexos</label>
+              <input 
+                type="file" 
+                id="annexFiles" 
+                class="form-input" 
+                multiple
+                accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.gif"
+              >
+              <small class="form-help">Puedes seleccionar múltiples archivos</small>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Nombre de carpeta de anexos</label>
+              <input 
+                type="text" 
+                id="annexFolderName" 
+                class="form-input" 
+                placeholder="Anexos-[NombreArchivo]-[Fecha]"
+                readonly
+              >
+              <small class="form-help">Se genera automáticamente basado en el archivo principal</small>
+            </div>
+
+            <div class="form-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="createAnnexFolder" checked>
+                <span>Crear carpeta de anexos automáticamente</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Metadatos -->
+          <div style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid #e5e7eb;">
+            <h4 style="margin-bottom: 1rem; font-weight: 600;">Metadatos (Opcional)</h4>
+
+            <div class="form-group">
+              <label class="form-label">Número de Documento</label>
+              <input 
+                type="text" 
+                id="docNumber" 
+                class="form-input" 
+                placeholder="Ej: DOC-2025-001"
+              >
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Etiquetas</label>
+              <input 
+                type="text" 
+                id="tags" 
+                class="form-input" 
+                placeholder="Separadas por comas: contrato, proveedor, 2025"
+              >
+              <small class="form-help">Ayudan en la búsqueda posterior</small>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Observaciones</label>
+              <textarea 
+                id="observations" 
+                class="form-input" 
+                rows="3"
+                placeholder="Notas adicionales sobre el documento..."
+              ></textarea>
+            </div>
+          </div>
+
+          <!-- Vista previa de archivos -->
+          <div id="filePreview" class="hidden" style="margin-top: 1rem; padding: 1rem; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px;">
+            <h4 style="margin-bottom: 0.5rem; font-weight: 600; color: #1e40af;">Vista Previa</h4>
+            <div id="filePreviewContent"></div>
+          </div>
+
+          <!-- Barra de progreso -->
+          <div id="uploadProgress" class="hidden" style="margin-top: 1rem;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+              <span id="uploadStatusText">Preparando...</span>
+              <span id="uploadPercentage">0%</span>
+            </div>
+            <div style="width: 100%; height: 8px; background: #e5e7eb; border-radius: 4px; overflow: hidden;">
+              <div id="uploadProgressBar" style="width: 0%; height: 100%; background: #3b82f6; transition: width 0.3s;"></div>
+            </div>
+          </div>
+        </form>
+      `;
+
+      ui.showModal('Subir Archivo', content, {
+        buttons: [
+          {
+            text: 'Subir',
+            class: 'btn btn-primary',
+            onClick: () => this.handleUpload()
+          },
+          {
+            text: 'Cancelar',
+            class: 'btn btn-secondary'
           }
-        },
-        {
-          text: 'Eliminar Todo',
-          class: 'btn btn-danger',
-          onClick: async () => {
-            if (confirm('¿Eliminar el archivo principal y todos los anexos?')) {
-              await this.deleteFile(mainFile.id, true, true);
-              ui.closeModal(document.querySelector('.modal-backdrop'));
+        ],
+        size: 'large'
+      });
+
+      // Configurar event listeners del formulario
+      this.setupUploadFormListeners(folderId);
+
+    } catch (error) {
+      console.error('[files.js] Error showing upload modal:', error);
+      ui.hideLoading();
+      ui.error('Error al cargar las carpetas: ' + (error.message || 'Error desconocido'));
+    }
+  }
+
+  /**
+   * Carga las carpetas disponibles para subir archivos
+   */
+  async loadFoldersForUpload() {
+    const uploadFolderId = document.getElementById('uploadFolderId');
+    
+    try {
+      console.log('[files.js] Cargando carpetas para subida...');
+      const user = auth.getCurrentUser();
+      
+      // Cargar dependencias primero
+      if (!this.dependencies || this.dependencies.length === 0) {
+        await this.loadDependencies();
+      }
+
+      console.log(`[files.js] ${this.dependencies.length} dependencias encontradas`);
+
+      // Por cada dependencia, cargar sus carpetas
+      this.folders = [];
+      
+      for (const dep of this.dependencies) {
+        try {
+          console.log(`[files.js] Cargando carpetas de ${dep.name} (${dep.id})...`);
+          const tree = await fetchWrapper.get(`/folders/dependencies/${dep.id}/tree`);
+          
+          console.log(`[files.js] Árbol recibido para ${dep.name}:`, tree);
+          
+          // Aplanar el árbol de carpetas
+          const flattenFolder = (folder, prefix = '') => {
+            const path = prefix ? `${prefix} / ${folder.name}` : folder.name;
+            this.folders.push({
+              id: folder.id,
+              name: folder.name,
+              path: path,
+              dependency_id: dep.id,
+              dependency_name: dep.name
+            });
+            
+            if (folder.children && folder.children.length > 0) {
+              folder.children.forEach(child => flattenFolder(child, path));
             }
+          };
+
+          if (Array.isArray(tree) && tree.length > 0) {
+            tree.forEach(root => flattenFolder(root));
+            console.log(`[files.js] ${tree.length} carpetas raíz aplanadas de ${dep.name}`);
+          } else if (tree && typeof tree === 'object') {
+            // Si el backend devuelve un objeto único en lugar de array
+            flattenFolder(tree);
+            console.log(`[files.js] 1 carpeta raíz aplanada de ${dep.name}`);
+          } else {
+            console.warn(`[files.js] No hay carpetas en ${dep.name}`);
           }
-        },
-        {
-          text: 'Mantener Archivos Exitosos',
-          class: 'btn btn-secondary'
+        } catch (error) {
+          console.error(`[files.js] Error cargando carpetas de ${dep.name}:`, error);
         }
-      ]
+      }
+
+      console.log(`[files.js] Total de carpetas cargadas: ${this.folders.length}`);
+
+      // No necesitamos llenar el selector aquí porque se hace en showUploadModal
+      // después de que este método termine
+
+    } catch (error) {
+      console.error('[files.js] Error loading folders for upload:', error);
+      this.folders = [];
+      throw error; // Propagar el error para que showUploadModal lo maneje
+    }
+  }
+
+  /**
+   * Configura los event listeners del formulario de subida
+   */
+  setupUploadFormListeners(preselectedFolderId = null) {
+    // Preseleccionar carpeta si se proporcionó
+    if (preselectedFolderId) {
+      const uploadFolderId = document.getElementById('uploadFolderId');
+      if (uploadFolderId) {
+        uploadFolderId.value = preselectedFolderId;
+      }
+    }
+
+    // Toggle anexos
+    const enableAnnexes = document.getElementById('enableAnnexes');
+    const annexesSection = document.getElementById('annexesSection');
+    
+    if (enableAnnexes && annexesSection) {
+      enableAnnexes.addEventListener('change', (e) => {
+        if (e.target.checked) {
+          annexesSection.classList.remove('hidden');
+          this.updateAnnexFolderName();
+        } else {
+          annexesSection.classList.add('hidden');
+        }
+      });
+    }
+
+    // Actualizar nombre de carpeta de anexos cuando cambia el archivo principal
+    const mainFile = document.getElementById('mainFile');
+    if (mainFile) {
+      mainFile.addEventListener('change', () => {
+        this.updateAnnexFolderName();
+        this.updateFilePreview();
+      });
+    }
+
+    // Actualizar preview cuando cambian los anexos
+    const annexFiles = document.getElementById('annexFiles');
+    if (annexFiles) {
+      annexFiles.addEventListener('change', () => {
+        this.updateFilePreview();
+      });
+    }
+  }
+
+  /**
+   * Actualiza el nombre de la carpeta de anexos
+   */
+  updateAnnexFolderName() {
+    const mainFile = document.getElementById('mainFile');
+    const annexFolderName = document.getElementById('annexFolderName');
+    
+    if (!mainFile || !annexFolderName) return;
+
+    const file = mainFile.files[0];
+    if (!file) {
+      annexFolderName.value = '';
+      return;
+    }
+
+    // Sanitizar nombre del archivo
+    const fileName = file.name.replace(/\.[^/.]+$/, ''); // Quitar extensión
+    const sanitized = fileName
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '') // Quitar acentos
+      .replace(/[^a-zA-Z0-9_-]/g, '_')  // Solo alfanuméricos, guiones y guiones bajos
+      .replace(/_+/g, '_')              // Colapsar múltiples guiones bajos
+      .substring(0, 60);                // Limitar longitud
+
+    // Formato: Anexos-[NombreArchivo]-[YYYYMMDD]
+    const date = new Date().toISOString().split('T')[0].replace(/-/g, '');
+    annexFolderName.value = `Anexos-${sanitized}-${date}`;
+  }
+
+  /**
+   * Actualiza la vista previa de archivos
+   */
+  updateFilePreview() {
+    const mainFile = document.getElementById('mainFile');
+    const annexFiles = document.getElementById('annexFiles');
+    const filePreview = document.getElementById('filePreview');
+    const filePreviewContent = document.getElementById('filePreviewContent');
+    
+    if (!mainFile || !filePreview || !filePreviewContent) return;
+
+    const mainFileObj = mainFile.files[0];
+    const annexFilesArray = annexFiles ? Array.from(annexFiles.files) : [];
+
+    if (!mainFileObj && annexFilesArray.length === 0) {
+      filePreview.classList.add('hidden');
+      return;
+    }
+
+    let html = '';
+
+    // Archivo principal
+    if (mainFileObj) {
+      html += `
+        <div style="margin-bottom: 0.5rem;">
+          <strong>📄 Archivo Principal:</strong>
+          <div style="margin-left: 1rem; margin-top: 0.25rem;">
+            ${this.escapeHtml(mainFileObj.name)} (${this.formatBytes(mainFileObj.size)})
+          </div>
+        </div>
+      `;
+    }
+
+    // Anexos
+    if (annexFilesArray.length > 0) {
+      html += `
+        <div style="margin-top: 0.5rem;">
+          <strong>📎 Anexos (${annexFilesArray.length}):</strong>
+          <ul style="margin-left: 1rem; margin-top: 0.25rem; list-style: none; padding: 0;">
+            ${annexFilesArray.map(file => `
+              <li style="margin-bottom: 0.25rem;">
+                → ${this.escapeHtml(file.name)} (${this.formatBytes(file.size)})
+              </li>
+            `).join('')}
+          </ul>
+        </div>
+      `;
+    }
+
+    filePreviewContent.innerHTML = html;
+    filePreview.classList.remove('hidden');
+  }
+
+  /**
+   * Maneja la subida de archivos
+   */
+  async handleUpload() {
+    try {
+      // Validar formulario
+      const mainFile = document.getElementById('mainFile')?.files[0];
+      const uploadFolderId = document.getElementById('uploadFolderId')?.value;
+
+      if (!mainFile) {
+        ui.error('Selecciona un archivo principal');
+        return false;
+      }
+
+      if (!uploadFolderId) {
+        ui.error('Selecciona una carpeta destino');
+        return false;
+      }
+
+      // Recopilar datos del formulario
+      const enableAnnexes = document.getElementById('enableAnnexes')?.checked;
+      const annexFiles = enableAnnexes ? Array.from(document.getElementById('annexFiles')?.files || []) : [];
+      const createAnnexFolder = document.getElementById('createAnnexFolder')?.checked ?? true;
+      
+      const metadata = {
+        doc_number: document.getElementById('docNumber')?.value || null,
+        tags: document.getElementById('tags')?.value?.split(',').map(t => t.trim()).filter(t => t) || [],
+        observations: document.getElementById('observations')?.value || null
+      };
+
+      // Crear FormData
+      const formData = new FormData();
+      formData.append('file', mainFile);
+      formData.append('folder_id', uploadFolderId);
+      formData.append('create_annex_folder', createAnnexFolder);
+      formData.append('metadata', JSON.stringify(metadata));
+
+      // Agregar anexos
+      if (annexFiles.length > 0) {
+        annexFiles.forEach(file => {
+          formData.append('anexos', file);
+        });
+      }
+
+      // Mostrar progreso
+      const uploadProgress = document.getElementById('uploadProgress');
+      const uploadStatusText = document.getElementById('uploadStatusText');
+      const uploadPercentage = document.getElementById('uploadPercentage');
+      const uploadProgressBar = document.getElementById('uploadProgressBar');
+      
+      if (uploadProgress) uploadProgress.classList.remove('hidden');
+
+      // Deshabilitar botón de subir
+      const submitButton = document.querySelector('.modal-footer .btn-primary');
+      if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.textContent = 'Subiendo...';
+      }
+
+      // Subir con XMLHttpRequest para seguir el progreso
+      const result = await this.uploadWithProgress(formData, (progress) => {
+        if (uploadPercentage) uploadPercentage.textContent = `${progress}%`;
+        if (uploadProgressBar) uploadProgressBar.style.width = `${progress}%`;
+        if (uploadStatusText) {
+          if (progress < 100) {
+            uploadStatusText.textContent = 'Subiendo archivos...';
+          } else {
+            uploadStatusText.textContent = 'Procesando...';
+          }
+        }
+      });
+
+      // Éxito
+      ui.hideModal();
+      ui.success(`Archivo subido correctamente${annexFiles.length > 0 ? ` con ${annexFiles.length} anexo(s)` : ''}`);
+      
+      // Recargar archivos
+      await this.loadFiles();
+
+      return true;
+
+    } catch (error) {
+      console.error('[files.js] Error uploading file:', error);
+      ui.error(error.message || 'Error al subir el archivo');
+      
+      // Rehabilitar botón
+      const submitButton = document.querySelector('.modal-footer .btn-primary');
+      if (submitButton) {
+        submitButton.disabled = false;
+        submitButton.textContent = 'Subir';
+      }
+
+      return false;
+    }
+  }
+
+  /**
+   * Sube archivos con seguimiento de progreso usando XMLHttpRequest
+   */
+  uploadWithProgress(formData, onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+
+      // Evento de progreso
+      xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable) {
+          const percentComplete = Math.round((e.loaded / e.total) * 100);
+          onProgress(percentComplete);
+        }
+      });
+
+      // Evento de carga completa
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const response = JSON.parse(xhr.responseText);
+            resolve(response);
+          } catch (error) {
+            resolve(xhr.responseText);
+          }
+        } else {
+          try {
+            const error = JSON.parse(xhr.responseText);
+            reject(new Error(error.detail || `Error ${xhr.status}`));
+          } catch (e) {
+            reject(new Error(`Error ${xhr.status}: ${xhr.statusText}`));
+          }
+        }
+      });
+
+      // Evento de error
+      xhr.addEventListener('error', () => {
+        reject(new Error('Error de red al subir el archivo'));
+      });
+
+      // Evento de cancelación
+      xhr.addEventListener('abort', () => {
+        reject(new Error('Subida cancelada'));
+      });
+
+      // Configurar y enviar
+      xhr.open('POST', `${fetchWrapper.baseURL}/files/upload`);
+      xhr.setRequestHeader('Authorization', `Bearer ${auth.getAccessToken()}`);
+      
+      // Agregar X-Request-Id
+      const requestId = this.generateUUID();
+      xhr.setRequestHeader('X-Request-Id', requestId);
+
+      xhr.send(formData);
     });
   }
 
   /**
-   * Reintenta subir anexos fallidos
+   * Genera un UUID v4
    */
-  async retryFailedAnnexes(mainFileId, failedAnnexes) {
-    ui.showLoading('Reintentando anexos...');
-
-    try {
-      // Nota: Este endpoint debe estar implementado en el backend
-      // POST /files/{mainFileId}/retry-annexes con { annex_names: [...] }
-      
-      const result = await fetchWrapper.post(`/files/${mainFileId}/retry-annexes`, {
-        annex_names: failedAnnexes.map(a => a.name)
-      });
-
-      ui.hideLoading();
-      ui.success(`${result.success_count} anexo(s) subidos correctamente`);
-
-      // Cerrar modal
-      const modal = document.querySelector('.modal-backdrop');
-      if (modal) ui.closeModal(modal);
-
-      // Recargar archivos
-      if (typeof this.loadFiles === 'function') {
-        await this.loadFiles(this.currentFolder);
-      }
-
-    } catch (error) {
-      ui.hideLoading();
-      console.error('Retry annexes error:', error);
-      ui.error('Error al reintentar anexos');
-    }
+  generateUUID() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      const r = Math.random() * 16 | 0;
+      const v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
   }
 
   /**
-   * Descarga un archivo con validación de checksum
+   * Descarga un archivo
    */
-  async downloadFile(fileId, filename) {
+  async downloadFile(fileId, fileName) {
     try {
-      ui.showLoading('Preparando descarga...');
-
-      // Usar fetch para capturar headers
-      const token = auth.getAccessToken();
+      ui.showLoading('Descargando archivo...');
+      
       const response = await fetch(`${fetchWrapper.baseURL}/files/${fileId}/download`, {
         headers: {
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${auth.getAccessToken()}`
         }
       });
 
       if (!response.ok) {
-        throw new Error('Download failed');
+        throw new Error('Error al descargar el archivo');
       }
 
-      // Capturar checksum si existe
-      const checksum = response.headers.get('X-Checksum-Sha256');
-      if (checksum) {
-        console.log('File checksum:', checksum);
-      }
-
-      // Obtener filename del Content-Disposition si existe
-      const disposition = response.headers.get('Content-Disposition');
-      let downloadFilename = filename;
-      
-      if (disposition && disposition.includes('filename=')) {
-        const matches = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/.exec(disposition);
-        if (matches && matches[1]) {
-          downloadFilename = matches[1].replace(/['"]/g, '');
-        }
-      }
-
-      // Descargar
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = downloadFilename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
       window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
 
       ui.hideLoading();
       ui.success('Archivo descargado correctamente');
-
     } catch (error) {
+      console.error('[files.js] Error downloading file:', error);
       ui.hideLoading();
-      console.error('Download error:', error);
-      ui.error('Error al descargar archivo');
-    }
-  }
-
-  /**
-   * Muestra modal para actualizar archivo (versioning)
-   */
-  async showUpdateFileModal(fileId) {
-    try {
-      // Obtener info del archivo actual
-      const fileInfo = await fetchWrapper.get(`/files/${fileId}`);
-
-      const content = document.createElement('div');
-      content.innerHTML = `
-        <div style="margin-bottom: 1rem; padding: 1rem; background: var(--color-gray-50); border-radius: var(--radius-md);">
-          <div><strong>Archivo actual:</strong> ${this.escapeHtml(fileInfo.original_name)}</div>
-          <div style="font-size: 0.875rem; color: var(--color-gray-600); margin-top: 0.25rem;">
-            Versión ${fileInfo.version || 1} • ${ui.formatBytes(fileInfo.size)}
-          </div>
-        </div>
-
-        <form id="updateFileForm">
-          <div class="form-group">
-            <label for="newFile" class="form-label">Nuevo Archivo *</label>
-            <input type="file" id="newFile" class="form-input" required>
-            <p class="text-muted" style="font-size: 0.875rem; margin-top: 0.5rem;">
-              Se creará una nueva versión del archivo
-            </p>
-          </div>
-
-          <div class="form-group">
-            <label for="updateComment" class="form-label">Comentario de Versión</label>
-            <textarea id="updateComment" class="form-input" rows="2" placeholder="Describe los cambios..."></textarea>
-          </div>
-        </form>
-
-        ${fileInfo.versions && fileInfo.versions.length > 0 ? `
-          <div style="margin-top: 1rem;">
-            <h4 style="margin-bottom: 0.5rem;">Versiones Anteriores</h4>
-            <div style="max-height: 200px; overflow-y: auto;">
-              ${fileInfo.versions.map(v => `
-                <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; background: var(--color-gray-50); border-radius: var(--radius-sm); margin-bottom: 0.5rem;">
-                  <div>
-                    <div style="font-weight: 500;">Versión ${v.version}</div>
-                    <div style="font-size: 0.875rem; color: var(--color-gray-600);">
-                      ${ui.formatDate(v.created_at)} • ${ui.formatBytes(v.size)}
-                    </div>
-                  </div>
-                  <button type="button" class="btn btn-sm btn-secondary" onclick="filesManager.downloadFile('${v.id}', '${this.escapeHtml(v.original_name)}')">
-                    Descargar
-                  </button>
-                </div>
-              `).join('')}
-            </div>
-          </div>
-        ` : ''}
-      `;
-
-      ui.showModal('Actualizar Archivo', content, {
-        buttons: [
-          {
-            text: 'Cancelar',
-            class: 'btn btn-secondary'
-          },
-          {
-            text: 'Actualizar',
-            class: 'btn btn-primary',
-            onClick: async () => {
-              await this.updateFile(fileId);
-            },
-            closeOnClick: false
-          }
-        ]
-      });
-
-    } catch (error) {
-      console.error('Error loading file info:', error);
-      ui.error('Error al cargar información del archivo');
-    }
-  }
-
-  /**
-   * Actualiza un archivo (crea nueva versión)
-   */
-  async updateFile(fileId) {
-    const newFileInput = document.getElementById('newFile');
-    const comment = document.getElementById('updateComment').value.trim();
-
-    if (!newFileInput.files || newFileInput.files.length === 0) {
-      ui.error('Selecciona un archivo');
-      return;
-    }
-
-    const formData = new FormData();
-    formData.append('file', newFileInput.files[0]);
-    if (comment) {
-      formData.append('version_comment', comment);
-    }
-
-    try {
-      ui.showLoading('Actualizando archivo...');
-
-      // Usar upload con progreso
-      const result = await fetchWrapper.upload(`/files/${fileId}`, formData, (percent) => {
-        // Opcional: actualizar progreso en modal
-      });
-
-      ui.hideLoading();
-      ui.success(`Archivo actualizado a versión ${result.version || 'nueva'}`);
-
-      // Cerrar modal
-      const modal = document.querySelector('.modal-backdrop');
-      if (modal) ui.closeModal(modal);
-
-      // Recargar archivos
-      if (typeof this.loadFiles === 'function') {
-        await this.loadFiles(this.currentFolder);
-      }
-
-    } catch (error) {
-      ui.hideLoading();
-      console.error('Update file error:', error);
-      ui.error('Error al actualizar archivo');
+      ui.error('Error al descargar el archivo');
     }
   }
 
   /**
    * Elimina un archivo
    */
-  async deleteFile(fileId, hard = false, cascade = false) {
-    const action = hard ? 'eliminar permanentemente' : 'eliminar';
-    
-    if (!confirm(`¿Estás seguro de que deseas ${action} este archivo?${cascade ? ' (incluidos anexos)' : ''}`)) {
-      return;
-    }
+  async deleteFile(fileId) {
+    const confirmed = await ui.confirm(
+      'Eliminar archivo',
+      '¿Estás seguro de que deseas eliminar este archivo? Esta acción no se puede deshacer.'
+    );
+
+    if (!confirmed) return;
 
     try {
-      ui.showLoading('Eliminando...');
-
-      const url = `/files/${fileId}?hard=${hard}${cascade ? '&cascade=true' : ''}`;
-      await fetchWrapper.delete(url);
+      ui.showLoading('Eliminando archivo...');
+      
+      await fetchWrapper.delete(`/files/${fileId}?hard=false`);
 
       ui.hideLoading();
-      ui.success(`Archivo ${hard ? 'eliminado permanentemente' : 'movido a papelera'}`);
-
+      ui.success('Archivo eliminado correctamente');
+      
       // Recargar archivos
-      if (typeof this.loadFiles === 'function') {
-        await this.loadFiles(this.currentFolder);
-      }
-
+      await this.loadFiles();
     } catch (error) {
+      console.error('[files.js] Error deleting file:', error);
       ui.hideLoading();
-      console.error('Delete file error:', error);
-      ui.error('Error al eliminar archivo');
+      ui.error('Error al eliminar el archivo');
     }
   }
 
   /**
-   * Lista anexos de un archivo
+   * Muestra los detalles de un archivo
    */
-  async loadAnnexes(fileId) {
+  async showFileDetails(fileId) {
     try {
-      const annexes = await fetchWrapper.get(`/files/${fileId}/anexos`);
-      return annexes;
+      ui.showLoading('Cargando detalles...');
+      
+      const file = await fetchWrapper.get(`/files/${fileId}`);
+
+      ui.hideLoading();
+
+      ui.showModal('Detalles del Archivo', `
+        <div class="file-details">
+          <div class="detail-row">
+            <strong>Nombre:</strong>
+            <span>${this.escapeHtml(file.original_name || file.name)}</span>
+          </div>
+          <div class="detail-row">
+            <strong>Tipo:</strong>
+            <span>${this.escapeHtml(file.mime_type || 'Desconocido')}</span>
+          </div>
+          <div class="detail-row">
+            <strong>Tamaño:</strong>
+            <span>${this.formatBytes(file.size_bytes || 0)}</span>
+          </div>
+          <div class="detail-row">
+            <strong>Subido por:</strong>
+            <span>${this.escapeHtml(file.uploaded_by_name || 'N/A')}</span>
+          </div>
+          <div class="detail-row">
+            <strong>Fecha de subida:</strong>
+            <span>${new Date(file.created_at).toLocaleString()}</span>
+          </div>
+          <div class="detail-row">
+            <strong>Última modificación:</strong>
+            <span>${new Date(file.updated_at).toLocaleString()}</span>
+          </div>
+          <div class="detail-row">
+            <strong>Versión:</strong>
+            <span>${file.version || 1}</span>
+          </div>
+          ${file.checksum_sha256 ? `
+            <div class="detail-row">
+              <strong>Checksum (SHA256):</strong>
+              <span style="font-family: monospace; font-size: 0.875rem;">${file.checksum_sha256}</span>
+            </div>
+          ` : ''}
+        </div>
+      `, {
+        buttons: [
+          {
+            text: 'Descargar',
+            class: 'btn btn-primary',
+            onClick: () => this.downloadFile(fileId, file.original_name || file.name)
+          },
+          {
+            text: 'Cerrar',
+            class: 'btn btn-secondary'
+          }
+        ]
+      });
     } catch (error) {
-      console.error('Error loading annexes:', error);
-      return [];
+      console.error('[files.js] Error loading file details:', error);
+      ui.hideLoading();
+      ui.error('Error al cargar los detalles del archivo');
     }
   }
 
   /**
-   * Renderiza sección de anexos
+   * Formatea bytes a formato legible
    */
-  renderAnnexesSection(fileId, annexes) {
-    if (!annexes || annexes.length === 0) {
-      return '';
-    }
-
-    return `
-      <details class="annexes-section" style="margin-top: 1rem; padding: 1rem; background: var(--color-gray-50); border-radius: var(--radius-md);">
-        <summary style="cursor: pointer; font-weight: 600;">
-          📎 Anexos (${annexes.length})
-        </summary>
-        <div style="margin-top: 1rem;">
-          ${annexes.map(annex => `
-            <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; background: white; border-radius: var(--radius-sm); margin-bottom: 0.5rem;">
-              <div style="flex: 1; min-width: 0;">
-                <div style="font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-                  ${this.escapeHtml(annex.original_name)}
-                </div>
-                <div style="font-size: 0.875rem; color: var(--color-gray-600);">
-                  ${ui.formatBytes(annex.size)}
-                </div>
-              </div>
-              <button type="button" class="btn btn-sm btn-secondary" onclick="filesManager.downloadFile('${annex.id}', '${this.escapeHtml(annex.original_name)}')">
-                Descargar
-              </button>
-            </div>
-          `).join('')}
-        </div>
-      </details>
-    `;
+  formatBytes(bytes, decimals = 2) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
   }
 
   /**
    * Escapa HTML para prevenir XSS
    */
   escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    if (!text) return '';
+    const map = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#039;'
+    };
+    return text.toString().replace(/[&<>"']/g, m => map[m]);
   }
 }
 
-// Exportar instancia singleton
+// Exportar instancia única
 export const filesManager = new FilesManager();
 
-// Hacer disponible globalmente
+// Hacer global para event handlers inline
 window.filesManager = filesManager;
