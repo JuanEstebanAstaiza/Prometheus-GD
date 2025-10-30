@@ -220,8 +220,10 @@ async def download_backup(
     500: {"model": ErrorResponse}
 })
 async def restore_backup(
-    backup_file: UploadFile = FastAPIFile(..., description="Backup file to restore"),
+    backup_file: Optional[UploadFile] = FastAPIFile(None, description="Backup file to restore"),
+    backup_id: Optional[str] = Form(None, description="ID of existing backup to restore"),
     strategy: str = Form(..., description="Restore strategy: 'simulate', 'create_new_ids', 'overwrite'"),
+    simulate: bool = Form(False, description="Only simulate, don't apply changes"),
     preserve_existing: bool = Form(True, description="Preserve existing data (for overwrite strategy)"),
     confirm: bool = Form(False, description="Confirm dangerous operations"),
     current_user: User = Depends(require_super_admin),
@@ -241,7 +243,7 @@ async def restore_backup(
     - overwrite: Overwrite existing data (dangerous, requires confirmation)
     """
     try:
-        logger.info(f"Restore requested by {current_user.email}, strategy: {strategy}, confirm: {confirm}")
+        logger.info(f"Restore requested by {current_user.email}, strategy: {strategy}, simulate: {simulate}, confirm: {confirm}")
 
         # Validate strategy
         valid_strategies = ["simulate", "create_new_ids", "overwrite"]
@@ -251,19 +253,46 @@ async def restore_backup(
                 detail=f"Invalid strategy. Must be one of: {', '.join(valid_strategies)}"
             )
 
-        # Read backup file
-        backup_content = await backup_file.read()
+        # Determine backup source
+        if backup_id:
+            # Load existing backup from server
+            backup_record = backup_service.get_backup_record(backup_id)
+            if not backup_record:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Backup not found"
+                )
+            
+            backup_path = backup_service.backup_path / backup_record["filename"]
+            if not backup_path.exists():
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Backup file not found on server"
+                )
+            
+            with open(backup_path, "rb") as f:
+                backup_content = f.read()
+            filename = backup_record["filename"]
+        elif backup_file:
+            # Read uploaded file
+            backup_content = await backup_file.read()
+            filename = backup_file.filename
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Either backup_file or backup_id must be provided"
+            )
 
-        if strategy == "simulate":
+        if simulate or strategy == "simulate":
             # Simulation mode - analyze without making changes
-            result = backup_service.simulate_restore(backup_content, backup_file.filename)
+            result = backup_service.simulate_restore(backup_content, filename)
 
             return {
                 "simulation": True,
                 "strategy": "simulate",
                 "restore_id": result["restore_id"],
                 "backup_info": {
-                    "filename": backup_file.filename,
+                    "filename": filename,
                     "metadata_version": result["metadata_version"],
                     "created_at": result["created_at"],
                     "dependency_id": result["dependency_id"],
@@ -283,7 +312,7 @@ async def restore_backup(
 
             result = backup_service.restore_backup(
                 backup_content,
-                backup_file.filename,
+                filename,
                 strategy=strategy,
                 preserve_existing=preserve_existing,
                 confirm=confirm

@@ -126,14 +126,15 @@ class BackupsManager {
         </td>
         <td data-label="Tamaño">
           <div style="font-size: 0.875rem; font-weight: 500;">
-            ${ui.formatBytes(backup.size_bytes)}
+            ${backup.total_size_bytes ? ui.formatBytes(backup.total_size_bytes) : 'N/A'}
           </div>
         </td>
         <td data-label="Acciones">
           <div class="table-actions">
             <button 
-              class="btn btn-sm btn-secondary" 
-              onclick="backupsManager.downloadBackup('${backup.id}', '${this.escapeHtml(backup.filename)}')"
+              class="btn btn-sm btn-secondary backup-download-btn" 
+              data-backup-id="${backup.id}"
+              data-backup-filename="${this.escapeHtml(backup.filename)}"
               title="Descargar backup"
             >
               <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
@@ -142,8 +143,9 @@ class BackupsManager {
               Descargar
             </button>
             <button 
-              class="btn btn-sm btn-warning" 
-              onclick="backupsManager.showRestoreModal('${backup.id}', '${this.escapeHtml(backup.filename)}')"
+              class="btn btn-sm btn-warning backup-restore-btn" 
+              data-backup-id="${backup.id}"
+              data-backup-filename="${this.escapeHtml(backup.filename)}"
               title="Restaurar backup"
             >
               <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
@@ -164,24 +166,56 @@ class BackupsManager {
     // Botón crear backup completo
     const createFullBackupBtn = document.getElementById('createFullBackupBtn');
     if (createFullBackupBtn) {
-      createFullBackupBtn.addEventListener('click', () => {
-        this.showCreateBackupModal();
+      createFullBackupBtn.addEventListener('click', async () => {
+        await this.showCreateBackupModal();
       });
     }
 
     // Botón crear backup parcial
     const createPartialBackupBtn = document.getElementById('createPartialBackupBtn');
     if (createPartialBackupBtn) {
-      createPartialBackupBtn.addEventListener('click', () => {
-        this.showCreateBackupModal(true);
+      createPartialBackupBtn.addEventListener('click', async () => {
+        await this.showCreateBackupModal(true);
       });
     }
+
+    // Event delegation para botones de descarga y restauración
+    document.addEventListener('click', async (e) => {
+      // Botón descargar
+      const downloadBtn = e.target.closest('.backup-download-btn');
+      if (downloadBtn) {
+        e.preventDefault();
+        const backupId = downloadBtn.dataset.backupId;
+        const filename = downloadBtn.dataset.backupFilename;
+        if (backupId && filename) {
+          await this.downloadBackup(backupId, filename);
+        }
+        return;
+      }
+
+      // Botón restaurar
+      const restoreBtn = e.target.closest('.backup-restore-btn');
+      if (restoreBtn) {
+        e.preventDefault();
+        const backupId = restoreBtn.dataset.backupId;
+        const filename = restoreBtn.dataset.backupFilename;
+        if (backupId && filename) {
+          this.showRestoreModal(backupId, filename);
+        }
+        return;
+      }
+    });
   }
 
   /**
    * Muestra modal para crear backup
    */
-  showCreateBackupModal(partial = false) {
+  async showCreateBackupModal(partial = false) {
+    // Cargar dependencias si es backup parcial
+    if (partial && (!this.dependencies || this.dependencies.length === 0)) {
+      await this.loadDependencies();
+    }
+
     const content = document.createElement('div');
     content.innerHTML = `
       <div>
@@ -199,9 +233,9 @@ class BackupsManager {
             <label for="backupDependency" class="form-label">Dependencia *</label>
             <select id="backupDependency" class="form-input" required>
               <option value="">Seleccionar...</option>
-              ${this.dependencies.map(dep => `
+              ${Array.isArray(this.dependencies) ? this.dependencies.map(dep => `
                 <option value="${dep.id}">${this.escapeHtml(dep.name)}</option>
-              `).join('')}
+              `).join('') : '<option value="">No hay dependencias disponibles</option>'}
             </select>
           </div>
         ` : ''}
@@ -265,6 +299,7 @@ class BackupsManager {
       ui.hideLoading();
 
       // Mostrar éxito con opción de descarga
+      const backup = result.backup || result; // Manejar ambas estructuras
       const successContent = document.createElement('div');
       successContent.innerHTML = `
         <div>
@@ -273,10 +308,10 @@ class BackupsManager {
           </div>
 
           <div style="padding: 1rem; background: var(--color-gray-50); border-radius: var(--radius-md);">
-            <div><strong>Archivo:</strong> ${this.escapeHtml(result.filename)}</div>
-            <div style="margin-top: 0.5rem;"><strong>Tamaño:</strong> ${ui.formatBytes(result.size_bytes)}</div>
-            <div style="margin-top: 0.5rem;"><strong>ID:</strong> ${result.id}</div>
-            ${result.checksum ? `<div style="margin-top: 0.5rem;"><strong>Checksum:</strong> <code style="font-size: 0.75rem;">${result.checksum.substring(0, 16)}...</code></div>` : ''}
+            <div><strong>Archivo:</strong> ${this.escapeHtml(backup.filename || backup.name || 'N/A')}</div>
+            <div style="margin-top: 0.5rem;"><strong>Tamaño:</strong> ${backup.total_size_bytes ? ui.formatBytes(backup.total_size_bytes) : 'N/A'}</div>
+            <div style="margin-top: 0.5rem;"><strong>ID:</strong> ${backup.id || 'N/A'}</div>
+            ${backup.checksum_sha256 ? `<div style="margin-top: 0.5rem;"><strong>Checksum:</strong> <code style="font-size: 0.75rem;">${backup.checksum_sha256.substring(0, 16)}...</code></div>` : ''}
           </div>
 
           <p style="margin-top: 1rem; font-size: 0.875rem; color: var(--color-gray-600);">
@@ -291,7 +326,7 @@ class BackupsManager {
             text: 'Descargar Ahora',
             class: 'btn btn-primary',
             onClick: async () => {
-              await this.downloadBackup(result.id, result.filename);
+              await this.downloadBackup(backup.id, backup.filename || backup.name);
             }
           },
           {

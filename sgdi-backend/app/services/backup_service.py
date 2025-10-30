@@ -374,6 +374,23 @@ class BackupService:
 
         return backup_info
 
+    def _serialize_model(self, obj: Any) -> Dict[str, Any]:
+        """Serialize SQLAlchemy model to JSON-serializable dict"""
+        result = {}
+        for key, value in obj.__dict__.items():
+            if key.startswith('_'):
+                continue
+            if isinstance(value, datetime):
+                result[key] = value.isoformat()
+            elif isinstance(value, (str, int, float, bool, type(None))):
+                result[key] = value
+            elif isinstance(value, dict):
+                result[key] = value  # Already serializable
+            else:
+                # Skip complex objects
+                continue
+        return result
+
     def _gather_backup_metadata(self, dependency_id: Optional[str], include_logs: bool) -> Dict[str, Any]:
         """Gather all metadata for backup"""
         db = SessionLocal()
@@ -389,19 +406,19 @@ class BackupService:
             query = db.query(Dependency)
             if dependency_id:
                 query = query.filter(Dependency.id == dependency_id)
-            metadata["dependencies"] = [dep.__dict__ for dep in query.all()]
+            metadata["dependencies"] = [self._serialize_model(dep) for dep in query.all()]
 
             # Folders
             query = db.query(Folder)
             if dependency_id:
                 query = query.filter(Folder.dependency_id == dependency_id)
-            metadata["folders"] = [folder.__dict__ for folder in query.all()]
+            metadata["folders"] = [self._serialize_model(folder) for folder in query.all()]
 
             # Files
             query = db.query(File)
             if dependency_id:
                 query = query.filter(File.dependency_id == dependency_id)
-            metadata["files"] = [file.__dict__ for file in query.all()]
+            metadata["files"] = [self._serialize_model(file) for file in query.all()]
 
             # Action logs (optional)
             if include_logs:
@@ -412,17 +429,7 @@ class BackupService:
                 # Limit to last 90 days to avoid huge backups
                 cutoff_date = datetime.utcnow() - timedelta(days=90)
                 query = query.filter(ActionLog.timestamp >= cutoff_date)
-                metadata["action_logs"] = [log.__dict__ for log in query.all()]
-
-            # Clean up SQLAlchemy internal fields
-            for entity_list in ["dependencies", "folders", "files"]:
-                if entity_list in metadata:
-                    for item in metadata[entity_list]:
-                        item.pop('_sa_instance_state', None)
-
-            if "action_logs" in metadata:
-                for item in metadata["action_logs"]:
-                    item.pop('_sa_instance_state', None)
+                metadata["action_logs"] = [self._serialize_model(log) for log in query.all()]
 
             return metadata
 
@@ -431,34 +438,67 @@ class BackupService:
 
     def _copy_physical_files(self, files_metadata: List[Dict], target_dir: Path,
                            dependency_id: Optional[str]) -> int:
-        """Copy physical files to backup directory"""
+        """
+        Copy physical files to backup directory preserving folder structure.
+        
+        Structure:
+        files/
+        ├── DEPENDENCY_CODE/
+        │   └── folder/path/
+        │       └── stored_name.ext
+        """
         total_size = 0
+        copied_count = 0
+        db = SessionLocal()
 
-        for file_meta in files_metadata:
-            try:
-                if dependency_id and file_meta.get("dependency_id") != dependency_id:
+        try:
+            for file_meta in files_metadata:
+                try:
+                    if dependency_id and file_meta.get("dependency_id") != dependency_id:
+                        continue
+
+                    # Get dependency and folder info from database
+                    dep = db.query(Dependency).filter(Dependency.id == file_meta["dependency_id"]).first()
+                    if not dep:
+                        logger.warning(f"Dependency not found for file {file_meta.get('original_name')}")
+                        continue
+
+                    folder = db.query(Folder).filter(Folder.id == file_meta["folder_id"]).first()
+                    if not folder:
+                        logger.warning(f"Folder not found for file {file_meta.get('original_name')}")
+                        continue
+
+                    # Build source path
+                    source_path = storage_service.get_file_path(
+                        dep.code, folder.path, file_meta["stored_name"]
+                    )
+
+                    if source_path.exists():
+                        # Preserve folder structure: files/DEPENDENCY_CODE/folder/path/stored_name
+                        relative_path = Path(dep.code) / folder.path / file_meta["stored_name"]
+                        target_path = target_dir / relative_path
+                        
+                        # Create parent directories if needed
+                        target_path.parent.mkdir(parents=True, exist_ok=True)
+                        
+                        # Copy file with metadata
+                        shutil.copy2(source_path, target_path)
+                        total_size += source_path.stat().st_size
+                        copied_count += 1
+                        
+                        logger.debug(f"Copied: {relative_path}")
+                    else:
+                        logger.warning(f"File not found: {source_path} (original: {file_meta.get('original_name')})")
+
+                except Exception as e:
+                    logger.warning(f"Failed to copy file {file_meta.get('original_name', 'unknown')}: {e}")
                     continue
 
-                # Get file path
-                dep_code = self._get_dependency_code(file_meta["dependency_id"])
-                folder_path = file_meta.get("path", "").split("/")[:-1]  # Remove filename
-                folder_path = "/".join(folder_path) if folder_path else ""
+            logger.info(f"Backup copy complete: {copied_count}/{len(files_metadata)} files, {total_size} bytes")
+            return total_size
 
-                source_path = storage_service.get_file_path(
-                    dep_code, folder_path, file_meta["stored_name"]
-                )
-
-                if source_path.exists():
-                    # Copy to backup
-                    target_path = target_dir / file_meta["stored_name"]
-                    shutil.copy2(source_path, target_path)
-                    total_size += source_path.stat().st_size
-
-            except Exception as e:
-                logger.warning(f"Failed to copy file {file_meta.get('original_name', 'unknown')}: {e}")
-                continue
-
-        return total_size
+        finally:
+            db.close()
 
     def _get_dependency_code(self, dependency_id: str) -> str:
         """Get dependency code from ID"""
