@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Sistema de Gestión Documental Institucional - FOVIS">
+  <title>SGDI - Iniciar Sesión</title>
+  
+  <!-- CSS -->
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/layout.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/responsive.css">
+</head>
+<body class="login-page">
+  <div class="login-container">
+    <div class="login-card">
+      <!-- Header -->
+      <div class="login-header">
+        <div class="login-logo">
+          <svg width="60" height="60" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect width="60" height="60" rx="12" fill="url(#gradient)"/>
+            <text x="30" y="42" text-anchor="middle" fill="white" font-size="32" font-weight="bold">S</text>
+            <defs>
+              <linearGradient id="gradient" x1="0" y1="0" x2="60" y2="60" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#0ea5e9"/>
+                <stop offset="1" stop-color="#0369a1"/>
+              </linearGradient>
+            </defs>
+          </svg>
+        </div>
+        <h1 class="login-title">SGDI</h1>
+        <p class="login-subtitle">Sistema de Gestión Documental Institucional</p>
+      </div>
+
+      <!-- Alert -->
+      <div id="loginAlert" class="alert alert-error hidden">
+        <span id="loginAlertMessage"></span>
+      </div>
+
+      <!-- Form -->
+      <form id="loginForm" class="login-form">
+        <div class="form-group">
+          <label for="email" class="form-label">Correo Electrónico</label>
+          <input
+            type="email"
+            id="email"
+            name="email"
+            class="form-input"
+            placeholder="tu@email.com"
+            required
+            autocomplete="email"
+            autofocus
+          >
+          <div id="emailError" class="form-error hidden"></div>
+        </div>
+
+        <div class="form-group">
+          <label for="password" class="form-label">Contraseña</label>
+          <input
+            type="password"
+            id="password"
+            name="password"
+            class="form-input"
+            placeholder="••••••••"
+            required
+            autocomplete="current-password"
+          >
+          <div id="passwordError" class="form-error hidden"></div>
+        </div>
+
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="rememberMe" name="rememberMe">
+            <span>Recordarme</span>
+          </label>
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-block" id="loginButton">
+          <span id="loginButtonText">Iniciar Sesión</span>
+          <span id="loginButtonSpinner" class="spinner hidden"></span>
+        </button>
+      </form>
+
+      <!-- Footer -->
+      <div class="login-footer">
+        <p>FOVIS - Fondo de Vivienda Social</p>
+        <p>&copy; 2025 Synera</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script type="module">
+    import { auth } from './js/auth.js';
+    import { validators } from './js/lib/validators.js';
+    import { ui } from './js/ui.js';
+
+    // NO verificar autenticación aquí - puede causar loops
+    // El login.html SIEMPRE debe mostrar el formulario
+    console.log('Login page loaded, ready for user input');
+
+    const loginForm = document.getElementById('loginForm');
+    const loginButton = document.getElementById('loginButton');
+    const loginButtonText = document.getElementById('loginButtonText');
+    const loginButtonSpinner = document.getElementById('loginButtonSpinner');
+    const loginAlert = document.getElementById('loginAlert');
+    const loginAlertMessage = document.getElementById('loginAlertMessage');
+    
+    const emailInput = document.getElementById('email');
+    const passwordInput = document.getElementById('password');
+    const emailError = document.getElementById('emailError');
+    const passwordError = document.getElementById('passwordError');
+
+    // Limpiar errores al escribir
+    emailInput.addEventListener('input', () => {
+      emailError.classList.add('hidden');
+      loginAlert.classList.add('hidden');
+    });
+
+    passwordInput.addEventListener('input', () => {
+      passwordError.classList.add('hidden');
+      loginAlert.classList.add('hidden');
+    });
+
+    // Manejar submit
+    loginForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      // Limpiar errores
+      emailError.classList.add('hidden');
+      passwordError.classList.add('hidden');
+      loginAlert.classList.add('hidden');
+
+      const email = emailInput.value.trim();
+      const password = passwordInput.value;
+
+      // Validar
+      let hasErrors = false;
+
+      const emailValidation = validators.required(email, 'El email') || validators.email(email);
+      if (emailValidation) {
+        emailError.textContent = emailValidation;
+        emailError.classList.remove('hidden');
+        hasErrors = true;
+      }
+
+      const passwordValidation = validators.required(password, 'La contraseña');
+      if (passwordValidation) {
+        passwordError.textContent = passwordValidation;
+        passwordError.classList.remove('hidden');
+        hasErrors = true;
+      }
+
+      if (hasErrors) return;
+
+      // Mostrar loading
+      loginButton.disabled = true;
+      loginButtonText.textContent = 'Iniciando sesión...';
+      loginButtonSpinner.classList.remove('hidden');
+
+      // Verificar bloqueo por intentos fallidos
+      const lockoutRemaining = auth.isLockedOut();
+      if (lockoutRemaining) {
+        loginAlertMessage.textContent = `⏱️ Demasiados intentos fallidos. Intenta de nuevo en ${lockoutRemaining} segundos.`;
+        loginAlert.classList.remove('hidden');
+        loginButton.disabled = false;
+        loginButtonText.textContent = 'Iniciar Sesión';
+        loginButtonSpinner.classList.add('hidden');
+        return;
+      }
+
+      try {
+        // Intentar login
+        await auth.login(email, password);
+
+        // Limpiar contraseña de memoria (seguridad)
+        passwordInput.value = '';
+
+        // Éxito
+        ui.showToast('¡Bienvenido al SGDI!', 'success');
+
+        // Redirigir a dashboard (página completa)
+        setTimeout(() => {
+          window.location.href = 'dashboard.html';
+        }, 500);
+
+      } catch (error) {
+        // Limpiar contraseña en error (seguridad)
+        passwordInput.value = '';
+
+        // Error
+        let errorMessage = 'Error al iniciar sesión. Verifica tus credenciales.';
+        
+        if (error.isLockout) {
+          errorMessage = error.message;
+          loginAlert.className = 'alert alert-warning';
+        } else if (error.status === 401) {
+          errorMessage = error.message || 'Email o contraseña incorrectos';
+          loginAlert.className = 'alert alert-error';
+        } else if (error.status === 403) {
+          errorMessage = 'Tu cuenta está desactivada. Contacta al administrador.';
+          loginAlert.className = 'alert alert-error';
+        } else if (error.status === 429) {
+          errorMessage = error.message || 'Demasiadas peticiones. Intenta más tarde.';
+          loginAlert.className = 'alert alert-warning';
+        } else if (error.message) {
+          errorMessage = error.message;
+          loginAlert.className = 'alert alert-error';
+        }
+
+        loginAlertMessage.textContent = errorMessage;
+        loginAlert.classList.remove('hidden');
+
+        // Restaurar botón
+        loginButton.disabled = false;
+        loginButtonText.textContent = 'Iniciar Sesión';
+        loginButtonSpinner.classList.add('hidden');
+      }
+    });
+
+    // NO HACER VERIFICACIÓN AUTOMÁTICA
+    // El login.html SIEMPRE debe mostrar el formulario
+    // Solo redirigir después de un login exitoso
+    console.log('Login page loaded, form ready for user input');
+  </script>
+</body>
+</html>
+

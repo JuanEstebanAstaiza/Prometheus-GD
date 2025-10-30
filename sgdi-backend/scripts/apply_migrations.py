@@ -51,7 +51,8 @@ class MigrationManager:
         if self.schema == "public":
             return
 
-        with self.engine.connect() as conn:
+        # Use transaction context manager with engine.begin()
+        with self.engine.begin() as conn:
             try:
                 # Check if schema exists
                 result = conn.execute(text(
@@ -61,14 +62,12 @@ class MigrationManager:
                 if not result.fetchone():
                     logger.info(f"Creating schema '{self.schema}'")
                     conn.execute(text(f"CREATE SCHEMA {self.schema}"))
-                    conn.commit()
                     logger.info(f"Schema '{self.schema}' created")
                 else:
                     logger.info(f"Schema '{self.schema}' already exists")
 
                 # Set search path
                 conn.execute(text(f"SET search_path TO {self.schema}, public"))
-                conn.commit()
 
             except Exception as e:
                 logger.error(f"Error creating/checking schema: {e}")
@@ -113,7 +112,7 @@ class MigrationManager:
 
     def _create_migrations_table(self):
         """Create migrations tracking table"""
-        with self.engine.connect() as conn:
+        with self.engine.begin() as conn:
             try:
                 conn.execute(text(f"""
                     CREATE TABLE IF NOT EXISTS {self.schema}.schema_migrations (
@@ -124,7 +123,6 @@ class MigrationManager:
                         error_message TEXT
                     )
                 """))
-                conn.commit()
                 logger.info("Migrations table created")
             except Exception as e:
                 logger.error(f"Error creating migrations table: {e}")
@@ -199,7 +197,6 @@ class MigrationManager:
                             error_message = NULL
                     """), {"id": migration_id, "checksum": checksum})
 
-                    trans.commit()
                     logger.info(f"Successfully applied migration: {migration_id}")
                     return True
 
@@ -207,19 +204,19 @@ class MigrationManager:
                     trans.rollback()
                     error_msg = str(e)
 
-                    # Record failed migration
+                    # Record failed migration (using a new connection)
                     try:
-                        conn.execute(text(f"""
-                            INSERT INTO {self.schema}.schema_migrations
-                            (migration_id, applied, applied_at, checksum, error_message)
-                            VALUES (:id, false, NOW(), :checksum, :error)
-                            ON CONFLICT (migration_id) DO UPDATE SET
-                                applied = false,
-                                applied_at = NOW(),
-                                checksum = :checksum,
-                                error_message = :error
-                        """), {"id": migration_id, "checksum": checksum, "error": error_msg})
-                        conn.commit()
+                        with self.engine.begin() as error_conn:
+                            error_conn.execute(text(f"""
+                                INSERT INTO {self.schema}.schema_migrations
+                                (migration_id, applied, applied_at, checksum, error_message)
+                                VALUES (:id, false, NOW(), :checksum, :error)
+                                ON CONFLICT (migration_id) DO UPDATE SET
+                                    applied = false,
+                                    applied_at = NOW(),
+                                    checksum = :checksum,
+                                    error_message = :error
+                            """), {"id": migration_id, "checksum": checksum, "error": error_msg})
                     except Exception as record_e:
                         logger.error(f"Failed to record migration error: {record_e}")
 

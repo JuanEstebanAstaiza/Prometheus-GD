@@ -76,6 +76,10 @@ async def create_backup(
             detail=f"Internal server error during backup creation: {str(e)}"
         )
 
+@router.get("", response_model=List[dict], responses={
+    200: {"description": "List of backup records"},
+    403: {"model": ErrorResponse}
+})
 @router.get("/", response_model=List[dict], responses={
     200: {"description": "List of backup records"},
     403: {"model": ErrorResponse}

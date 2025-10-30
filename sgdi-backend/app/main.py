@@ -19,7 +19,8 @@ app = FastAPI(
     description="API REST para gestión documental integrada",
     version="1.0.0",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    redirect_slashes=False  # Deshabilitar redirecciones automáticas de /path a /path/
 )
 
 # Configure CORS

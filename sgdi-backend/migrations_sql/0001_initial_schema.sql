@@ -13,6 +13,15 @@
 -- TABLES
 -- =====================================================
 
+-- Dependencies table (must be created first as it's referenced by other tables)
+CREATE TABLE IF NOT EXISTS dependencies (
+    id VARCHAR PRIMARY KEY,
+    name VARCHAR NOT NULL,
+    code VARCHAR NOT NULL UNIQUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- Users table
 CREATE TABLE IF NOT EXISTS users (
     id VARCHAR PRIMARY KEY,
@@ -22,15 +31,6 @@ CREATE TABLE IF NOT EXISTS users (
     role VARCHAR NOT NULL CHECK (role IN ('SUPER_ADMIN', 'ADMIN_DEP', 'WORKER', 'READER')),
     dependency_id VARCHAR REFERENCES dependencies(id),
     is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- Dependencies table
-CREATE TABLE IF NOT EXISTS dependencies (
-    id VARCHAR PRIMARY KEY,
-    name VARCHAR NOT NULL,
-    code VARCHAR NOT NULL UNIQUE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );

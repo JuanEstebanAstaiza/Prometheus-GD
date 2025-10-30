@@ -185,6 +185,7 @@ async def get_file_audit_logs(
         )
 
 # Legacy endpoints for backward compatibility
+@router.get("")
 @router.get("/")
 def read_action_logs_legacy(
     skip: int = 0,

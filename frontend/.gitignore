@@ -1,0 +1,29 @@
+# Frontend nativo - no hay node_modules ni builds
+
+# Sistema
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporal
+*.tmp
+*.temp
+.cache/
+
+# No versionar archivos de configuración local (si se crean)
+config.local.js
+
+# Backup
+*.bak
+*.backup
+

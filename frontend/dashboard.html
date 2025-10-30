@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Sistema de Gestión Documental Institucional - FOVIS">
+  <title>Dashboard - SGDI</title>
+  
+  <!-- CSS -->
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/layout.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/responsive.css">
+</head>
+<body>
+  <!-- App Container -->
+  <div class="app-container">
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <img src="assets/logo.svg" alt="SGDI Logo" class="sidebar-logo">
+        <div>
+          <h1 class="sidebar-title">SGDI</h1>
+          <p class="sidebar-subtitle">FOVIS</p>
+        </div>
+      </div>
+      <!-- Sidebar nav se carga dinámicamente desde main.js -->
+      <div class="sidebar-footer">
+        <p>&copy; 2025 Synera</p>
+        <p style="font-size: 10px; margin-top: 4px;">v1.0.0</p>
+      </div>
+    </aside>
+
+    <!-- Main Container -->
+    <div class="main-container">
+      <!-- Navbar -->
+      <nav class="navbar">
+        <div class="navbar-left">
+          <button class="navbar-menu-toggle" id="menuToggle" aria-label="Toggle menu">
+            <svg fill="currentColor" viewBox="0 0 24 24">
+              <path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </button>
+          <h2 class="navbar-title" id="pageTitle">Dashboard</h2>
+        </div>
+
+        <div class="navbar-right">
+          <!-- User Menu -->
+          <div class="navbar-user" id="userMenuButton">
+            <div class="navbar-user-avatar" id="userAvatar">A</div>
+            <div class="navbar-user-info">
+              <div class="navbar-user-name" id="userName">Usuario</div>
+              <div class="navbar-user-role" id="userRole">Rol</div>
+            </div>
+            <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
+              <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/>
+            </svg>
+
+            <!-- Dropdown -->
+            <div class="navbar-user-dropdown hidden" id="userMenuDropdown">
+              <a href="#/profile">
+                <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20" style="display: inline-block; vertical-align: middle; margin-right: 8px;">
+                  <path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd"/>
+                </svg>
+                Mi Perfil
+              </a>
+              <a href="#/settings">
+                <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20" style="display: inline-block; vertical-align: middle; margin-right: 8px;">
+                  <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>
+                </svg>
+                Configuración
+              </a>
+              <hr>
+              <button id="logoutButton">
+                <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20" style="display: inline-block; vertical-align: middle; margin-right: 8px;">
+                  <path fill-rule="evenodd" d="M3 3a1 1 0 00-1 1v12a1 1 0 102 0V4a1 1 0 00-1-1zm10.293 9.293a1 1 0 001.414 1.414l3-3a1 1 0 000-1.414l-3-3a1 1 0 10-1.414 1.414L14.586 9H7a1 1 0 100 2h7.586l-1.293 1.293z" clip-rule="evenodd"/>
+                </svg>
+                Cerrar Sesión
+              </button>
+            </div>
+          </div>
+        </div>
+      </nav>
+
+      <!-- Page Content -->
+      <main class="page-content">
+        <div class="page-container" id="mainContent">
+          <!-- El contenido se carga dinámicamente desde el router -->
+          <div class="loading-state">
+            <div class="spinner"></div>
+            <p style="margin-top: 1rem; color: var(--color-gray-600);">Cargando...</p>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

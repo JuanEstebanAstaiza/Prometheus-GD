@@ -17,6 +17,9 @@ class DependencyResponse(DependencyBase):
     id: str
     created_at: datetime
     updated_at: datetime
+    user_count: int = 0
+    folder_count: int = 0
+    file_count: int = 0
 
     class Config:
         orm_mode = True

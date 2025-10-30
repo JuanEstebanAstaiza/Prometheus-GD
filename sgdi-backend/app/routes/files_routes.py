@@ -7,7 +7,11 @@ import json
 import uuid
 from pathlib import Path
 from datetime import datetime
+import logging
 
+logger = logging.getLogger(__name__)
+
+from ..core.config import settings
 from ..core.database import get_db
 from ..core.auth import get_current_active_user, require_admin_dep_or_super, require_worker_or_higher
 from ..models.file import File
@@ -25,6 +29,9 @@ from ..services.audit_service import audit_service
 
 router = APIRouter()
 
+@router.get("", response_model=FileList, responses={
+    200: {"model": FileList}
+})
 @router.get("/", response_model=FileList, responses={
     200: {"model": FileList}
 })

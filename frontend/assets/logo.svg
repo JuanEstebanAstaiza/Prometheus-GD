@@ -1,0 +1,19 @@
+<svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Gradient Background -->
+  <defs>
+    <linearGradient id="bgGradient" x1="0" y1="0" x2="120" y2="120" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0ea5e9"/>
+      <stop offset="1" stop-color="#0369a1"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Background Circle -->
+  <rect width="120" height="120" rx="24" fill="url(#bgGradient)"/>
+  
+  <!-- Letter S -->
+  <text x="60" y="85" text-anchor="middle" fill="white" font-size="64" font-weight="bold" font-family="Arial, sans-serif">S</text>
+  
+  <!-- Small accent line -->
+  <rect x="30" y="95" width="60" height="4" rx="2" fill="white" opacity="0.5"/>
+</svg>
+

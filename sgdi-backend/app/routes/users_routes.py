@@ -2,6 +2,7 @@ from typing import List, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
+import uuid
 
 from ..core.database import get_db
 from ..core.auth import get_current_active_user, require_super_admin, require_admin_dep_or_super
@@ -44,6 +45,9 @@ async def update_user_me(
     db.refresh(current_user)
     return current_user
 
+@router.get("", response_model=UserList, responses={
+    200: {"model": UserList}
+})
 @router.get("/", response_model=UserList, responses={
     200: {"model": UserList}
 })
@@ -108,6 +112,11 @@ async def read_users(
 
     return {"items": users, "total": total}
 
+@router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED, responses={
+    201: {"model": UserResponse},
+    400: {"model": ErrorResponse},
+    403: {"model": ErrorResponse},
+})
 @router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED, responses={
     201: {"model": UserResponse},
     400: {"model": ErrorResponse},
@@ -171,8 +180,9 @@ async def create_user(
     # Hash password
     password_hash = get_password_hash(user.password)
 
-    # Create user
+    # Create user with explicit UUID
     db_user = User(
+        id=str(uuid.uuid4()),
         **user.dict(exclude={"password"}),
         password_hash=password_hash
     )

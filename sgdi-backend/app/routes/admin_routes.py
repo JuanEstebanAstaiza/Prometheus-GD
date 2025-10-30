@@ -71,7 +71,7 @@ async def force_create_monthly_folders(
             "success": True,
             "message": f"Monthly folders creation completed. Created {len(created_folders)} folders.",
             "folders_created": created_folders,
-            "target_month": month or "02d"
+            "target_month": month or f"{datetime.utcnow().year}-{datetime.utcnow().month:02d}"
         }
 
     except HTTPException:

@@ -1,4 +1,5 @@
 from typing import List
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_
@@ -15,6 +16,10 @@ from ..services.audit_service import audit_service
 
 router = APIRouter()
 
+# Definir ambas rutas (con y sin barra final) para evitar problemas con redirect_slashes=False
+@router.get("", response_model=DependencyList, responses={
+    200: {"model": DependencyList}
+})
 @router.get("/", response_model=DependencyList, responses={
     200: {"model": DependencyList}
 })
@@ -58,8 +63,42 @@ async def read_dependencies(
     # Get paginated results
     dependencies = query.offset(skip).limit(limit).all()
 
-    return {"items": dependencies, "total": total}
+    # Add counters to each dependency
+    from ..models.user import User
+    from ..models.file import File
+    
+    items_with_counts = []
+    for dep in dependencies:
+        # Count users in this dependency
+        user_count = db.query(User).filter(User.dependency_id == dep.id).count()
+        
+        # Count folders in this dependency
+        folder_count = db.query(Folder).filter(Folder.dependency_id == dep.id).count()
+        
+        # Count files in this dependency
+        file_count = db.query(File).filter(File.dependency_id == dep.id).count()
+        
+        # Convert to dict and add counts
+        dep_dict = {
+            "id": dep.id,
+            "name": dep.name,
+            "code": dep.code,
+            "created_at": dep.created_at.isoformat() if dep.created_at else None,
+            "updated_at": dep.updated_at.isoformat() if dep.updated_at else None,
+            "user_count": user_count,
+            "folder_count": folder_count,
+            "file_count": file_count
+        }
+        items_with_counts.append(dep_dict)
 
+    return {"items": items_with_counts, "total": total}
+
+@router.post("", response_model=DependencyResponse, status_code=status.HTTP_201_CREATED, responses={
+    201: {"model": DependencyResponse},
+    400: {"model": ErrorResponse},
+    403: {"model": ErrorResponse},
+    409: {"model": ConflictResponse}
+})
 @router.post("/", response_model=DependencyResponse, status_code=status.HTTP_201_CREATED, responses={
     201: {"model": DependencyResponse},
     400: {"model": ErrorResponse},
@@ -90,6 +129,7 @@ async def create_dependency(
 
     # Create dependency
     db_dependency = Dependency(
+        id=str(uuid.uuid4()),
         name=dependency.name,
         code=dependency.code.upper()
     )
@@ -99,10 +139,12 @@ async def create_dependency(
 
     # Create root folder for dependency
     root_folder = Folder(
+        id=str(uuid.uuid4()),
         name=dependency.name,
         path=dependency.name,
         dependency_id=db_dependency.id,
-        created_by=current_user.id
+        created_by=current_user.id,
+        updated_by=current_user.id
     )
 
     db.add(root_folder)

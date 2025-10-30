@@ -20,6 +20,7 @@ Or set environment variables:
 
 import os
 import sys
+import uuid
 from pathlib import Path
 
 # Add the app directory to the Python path
@@ -72,6 +73,7 @@ def create_superadmin():
         hashed_password = get_password_hash(superadmin_password)
 
         superadmin_user = User(
+            id=str(uuid.uuid4()),
             email=superadmin_email,
             full_name=superadmin_full_name,
             password_hash=hashed_password,

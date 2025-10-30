@@ -2,6 +2,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
+import uuid
 
 from ..core.database import get_db
 from ..core.auth import get_current_active_user, require_admin_dep_or_super
@@ -53,6 +54,13 @@ async def get_dependency_folder_tree(
     tree = folder_service.build_folder_tree(db, dependency_id)
     return tree
 
+@router.post("", response_model=FolderResponse, status_code=status.HTTP_201_CREATED, responses={
+    201: {"model": FolderResponse},
+    400: {"model": ErrorResponse},
+    403: {"model": ErrorResponse},
+    404: {"model": NotFoundResponse},
+    409: {"model": ConflictResponse}
+})
 @router.post("/", response_model=FolderResponse, status_code=status.HTTP_201_CREATED, responses={
     201: {"model": FolderResponse},
     400: {"model": ErrorResponse},
@@ -126,11 +134,13 @@ async def create_folder(
 
     # Create folder
     db_folder = Folder(
+        id=str(uuid.uuid4()),
         name=folder.name,
         path=path,
         parent_id=folder.parent_id,
         dependency_id=folder.dependency_id,
-        created_by=current_user.id
+        created_by=current_user.id,
+        updated_by=current_user.id
     )
 
     db.add(db_folder)
