@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test DELETE Permanent</title>
+</head>
+<body>
+    <h1>Test DELETE /users/{id}/permanent</h1>
+    <button id="testBtn">Test DELETE Request</button>
+    <pre id="result"></pre>
+
+    <script>
+        const resultEl = document.getElementById('result');
+        const testBtn = document.getElementById('testBtn');
+
+        testBtn.addEventListener('click', async () => {
+            resultEl.textContent = 'Testing...\n\n';
+            
+            const token = localStorage.getItem('token');
+            if (!token) {
+                resultEl.textContent = 'ERROR: No token found. Please login first.';
+                return;
+            }
+
+            const userId = 'e328705a-daa5-4bc6-b3f8-f2a602c83d94';
+            const url = `http://localhost:8000/users/${userId}/permanent`;
+
+            try {
+                // Test 1: OPTIONS (preflight)
+                resultEl.textContent += '1. Testing OPTIONS (preflight)...\n';
+                const optionsResponse = await fetch(url, {
+                    method: 'OPTIONS',
+                    headers: {
+                        'Origin': 'http://localhost:3000',
+                        'Access-Control-Request-Method': 'DELETE',
+                        'Access-Control-Request-Headers': 'authorization'
+                    }
+                });
+                resultEl.textContent += `   Status: ${optionsResponse.status}\n`;
+                resultEl.textContent += `   Headers:\n`;
+                for (const [key, value] of optionsResponse.headers.entries()) {
+                    if (key.startsWith('access-control')) {
+                        resultEl.textContent += `     ${key}: ${value}\n`;
+                    }
+                }
+                resultEl.textContent += '\n';
+
+                // Test 2: DELETE
+                resultEl.textContent += '2. Testing DELETE...\n';
+                const deleteResponse = await fetch(url, {
+                    method: 'DELETE',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                resultEl.textContent += `   Status: ${deleteResponse.status}\n`;
+                const data = await deleteResponse.json();
+                resultEl.textContent += `   Response: ${JSON.stringify(data, null, 2)}\n`;
+
+            } catch (error) {
+                resultEl.textContent += `\nERROR: ${error.message}\n`;
+                resultEl.textContent += `Stack: ${error.stack}\n`;
+            }
+        });
+    </script>
+</body>
+</html>
+

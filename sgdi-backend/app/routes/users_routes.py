@@ -392,20 +392,122 @@ async def delete_user(
 
     db.commit()
 
-    # Log audit event
-    audit_service.log_action(
-        db=db,
-        user=current_user,
-        action_type="DELETE_USER",
-        target_type="USER",
-        target_id=user.id,
-        details={
-            "email": user.email,
-            "full_name": user.full_name,
-            "role": user.role,
-            "was_active": old_active_status,
-            "soft_delete": True
-        }
-    )
+    return {"message": "User deactivated successfully"}
 
-    return {"message": "User deleted successfully"}
+@router.options("/{user_id}/permanent")
+async def options_delete_user_permanently(user_id: str):
+    """
+    Handle CORS preflight for permanent delete
+    """
+    return {}
+
+@router.delete("/{user_id}/permanent", responses={
+    204: {"description": "User permanently deleted"},
+    400: {"model": ErrorResponse},
+    403: {"model": ErrorResponse},
+    404: {"model": NotFoundResponse}
+})
+async def delete_user_permanently(
+    user_id: str,
+    current_user: User = Depends(require_admin_dep_or_super),
+    db: Session = Depends(get_db)
+):
+    """
+    Permanently delete user (hard delete) - only for inactive users
+    
+    This operation is irreversible and can only be performed on inactive users.
+    Before deleting, all references to the user are set to NULL.
+    
+    - Super admin: can permanently delete any inactive user
+    - Admin: can permanently delete inactive WORKER/READER users in their dependency
+    """
+    from ..models.folder import Folder
+    from ..models.file import File
+    from ..models.backup import BackupRecord
+    from ..models.refresh_tokens import RefreshToken
+    from ..models.action_logs import ActionLog
+    
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # Don't allow deleting self
+    if user.id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete yourself"
+        )
+
+    # Only allow deleting inactive users
+    if user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot permanently delete an active user. Deactivate the user first."
+        )
+
+    # Check permissions
+    if current_user.role == "ADMIN_DEP":
+        # Admin can only delete users in their dependency
+        if user.dependency_id != current_user.dependency_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. You can only delete users in your own dependency."
+            )
+
+        # Admin can only delete WORKER/READER users
+        if user.role not in ["WORKER", "READER"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. You can only delete WORKER and READER users."
+            )
+
+    # Store user info for logging before deletion
+    user_info = {
+        "email": user.email,
+        "full_name": user.full_name,
+        "role": user.role,
+        "dependency_id": user.dependency_id
+    }
+
+    # Update all references to this user to NULL before deletion
+    # This prevents foreign key constraint violations
+    
+    # Update folders created/updated by this user
+    db.query(Folder).filter(Folder.created_by == user_id).update(
+        {"created_by": None}, synchronize_session=False
+    )
+    db.query(Folder).filter(Folder.updated_by == user_id).update(
+        {"updated_by": None}, synchronize_session=False
+    )
+    
+    # Update files uploaded by this user
+    db.query(File).filter(File.uploaded_by == user_id).update(
+        {"uploaded_by": None}, synchronize_session=False
+    )
+    
+    # Update backups created by this user
+    db.query(BackupRecord).filter(BackupRecord.created_by == user_id).update(
+        {"created_by": None}, synchronize_session=False
+    )
+    
+    # Update action logs for this user
+    db.query(ActionLog).filter(ActionLog.user_id == user_id).update(
+        {"user_id": None}, synchronize_session=False
+    )
+    
+    # Delete refresh tokens for this user
+    db.query(RefreshToken).filter(RefreshToken.user_id == user_id).delete(
+        synchronize_session=False
+    )
+    
+    # Commit the updates before deleting the user
+    db.flush()
+
+    # Hard delete - remove from database
+    db.delete(user)
+    db.commit()
+
+    return {"message": "User permanently deleted successfully"}

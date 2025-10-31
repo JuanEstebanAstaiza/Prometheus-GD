@@ -257,15 +257,27 @@ class UsersManager {
                   </svg>
                 </button>
                 ${!isCurrentUser ? `
-                  <button 
-                    class="btn btn-sm btn-danger" 
-                    onclick="usersManager.showDeleteUserModal('${user.id}')"
-                    title="Eliminar usuario"
-                  >
-                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
-                      <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/>
-                    </svg>
-                  </button>
+                  ${user.is_active ? `
+                    <button 
+                      class="btn btn-sm btn-warning" 
+                      onclick="usersManager.showDeactivateUserModal('${user.id}')"
+                      title="Desactivar usuario"
+                    >
+                      <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M13.477 14.89A6 6 0 015.11 6.524l8.367 8.368zm1.414-1.414L6.524 5.11a6 6 0 018.367 8.367zM18 10a8 8 0 11-16 0 8 8 0 0116 0z" clip-rule="evenodd"/>
+                      </svg>
+                    </button>
+                  ` : `
+                    <button 
+                      class="btn btn-sm btn-danger" 
+                      onclick="usersManager.showPermanentDeleteUserModal('${user.id}')"
+                      title="Eliminar permanentemente"
+                    >
+                      <svg width="16" height="16" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/>
+                      </svg>
+                    </button>
+                  `}
                 ` : ''}
               ` : `
                 <span class="text-muted" style="font-size: 0.875rem;" title="No tienes permisos para editar este usuario">
@@ -689,19 +701,19 @@ class UsersManager {
   }
 
   /**
-   * Muestra modal para eliminar usuario
+   * Muestra modal para desactivar usuario (soft delete)
    */
-  async showDeleteUserModal(userId) {
+  async showDeactivateUserModal(userId) {
     try {
       const user = await fetchWrapper.get(`/users/${userId}`);
 
       const content = document.createElement('div');
       content.innerHTML = `
         <div>
-          <div style="margin-bottom: 1rem; padding: 1rem; background: var(--color-danger-50); border: 1px solid var(--color-danger-200); border-radius: var(--radius-md);">
-            <strong>⚠️ Advertencia</strong>
+          <div style="margin-bottom: 1rem; padding: 1rem; background: var(--color-warning-50); border: 1px solid var(--color-warning-200); border-radius: var(--radius-md);">
+            <strong>⚠️ Desactivar Usuario</strong>
             <p style="margin-top: 0.5rem; margin-bottom: 0;">
-              Esta acción desactivará al usuario y no podrá iniciar sesión.
+              Esta acción desactivará al usuario. No podrá iniciar sesión, pero sus datos se mantendrán en el sistema.
             </p>
           </div>
 
@@ -712,22 +724,22 @@ class UsersManager {
           </div>
 
           <p class="text-muted" style="font-size: 0.875rem; margin-top: 1rem;">
-            Los archivos creados por este usuario se mantendrán en el sistema.
+            💡 El usuario desactivado podrá ser eliminado permanentemente después.
           </p>
         </div>
       `;
 
-      ui.showModal('Eliminar Usuario', content, {
+      ui.showModal('Desactivar Usuario', content, {
         buttons: [
           {
             text: 'Cancelar',
             class: 'btn btn-secondary'
           },
           {
-            text: 'Eliminar',
-            class: 'btn btn-danger',
+            text: 'Desactivar',
+            class: 'btn btn-warning',
             onClick: async () => {
-              await this.deleteUser(userId);
+              await this.deactivateUser(userId);
             }
           }
         ]
@@ -740,16 +752,16 @@ class UsersManager {
   }
 
   /**
-   * Elimina (soft delete) un usuario
+   * Desactiva un usuario (soft delete)
    */
-  async deleteUser(userId) {
+  async deactivateUser(userId) {
     try {
-      ui.showLoading('Eliminando usuario...');
+      ui.showLoading('Desactivando usuario...');
 
       await fetchWrapper.delete(`/users/${userId}`);
 
       ui.hideLoading();
-      ui.success('Usuario eliminado correctamente');
+      ui.success('Usuario desactivado correctamente');
 
       // Recargar usuarios
       await this.loadUsers();
@@ -760,15 +772,116 @@ class UsersManager {
 
     } catch (error) {
       ui.hideLoading();
-      console.error('Error deleting user:', error);
+      console.error('Error deactivating user:', error);
 
       const requestId = error.data?.request_id;
-      let errorMessage = 'Error al eliminar usuario';
+      let errorMessage = 'Error al desactivar usuario';
 
       if (error.status === 403) {
+        errorMessage = 'No tienes permisos para desactivar este usuario';
+      } else if (error.data?.detail) {
+        errorMessage = error.data.detail;
+      }
+
+      ui.error(`${errorMessage}${requestId ? ` (ID: ${requestId})` : ''}`);
+    }
+  }
+
+  /**
+   * Muestra modal para eliminar usuario permanentemente (hard delete)
+   */
+  async showPermanentDeleteUserModal(userId) {
+    try {
+      const user = await fetchWrapper.get(`/users/${userId}`);
+
+      const content = document.createElement('div');
+      content.innerHTML = `
+        <div>
+          <div style="margin-bottom: 1rem; padding: 1rem; background: var(--color-danger-50); border: 1px solid var(--color-danger-200); border-radius: var(--radius-md);">
+            <strong>🗑️ ELIMINAR PERMANENTEMENTE</strong>
+            <p style="margin-top: 0.5rem; margin-bottom: 0;">
+              <strong>⚠️ ESTA ACCIÓN ES IRREVERSIBLE</strong><br>
+              El usuario y todos sus datos asociados serán eliminados completamente de la base de datos.
+            </p>
+          </div>
+
+          <div style="padding: 1rem; background: var(--color-gray-50); border-radius: var(--radius-md);">
+            <div><strong>Usuario:</strong> ${this.escapeHtml(user.full_name)}</div>
+            <div style="margin-top: 0.5rem;"><strong>Email:</strong> ${this.escapeHtml(user.email)}</div>
+            <div style="margin-top: 0.5rem;"><strong>Rol:</strong> ${this.getRoleName(user.role)}</div>
+            <div style="margin-top: 0.5rem;">
+              <span class="badge badge-gray">Inactivo</span>
+            </div>
+          </div>
+
+          <div style="margin-top: 1rem; padding: 1rem; background: var(--color-gray-50); border-left: 3px solid var(--color-danger-500); border-radius: var(--radius-md);">
+            <strong>⚠️ Antes de continuar:</strong>
+            <ul style="margin: 0.5rem 0 0 1.25rem; padding: 0;">
+              <li>Los archivos del usuario se mantendrán en el sistema</li>
+              <li>No se podrá recuperar la cuenta del usuario</li>
+              <li>Esta acción quedará registrada en el sistema</li>
+            </ul>
+          </div>
+
+          <p style="margin-top: 1rem; font-weight: 600; color: var(--color-danger-600); text-align: center;">
+            ¿Estás seguro de que deseas eliminar permanentemente este usuario?
+          </p>
+        </div>
+      `;
+
+      ui.showModal('Eliminar Usuario Permanentemente', content, {
+        buttons: [
+          {
+            text: 'Cancelar',
+            class: 'btn btn-secondary'
+          },
+          {
+            text: 'ELIMINAR PERMANENTEMENTE',
+            class: 'btn btn-danger',
+            onClick: async () => {
+              await this.deletePermanentlyUser(userId);
+            }
+          }
+        ],
+        size: 'large'
+      });
+
+    } catch (error) {
+      console.error('Error loading user:', error);
+      ui.error('Error al cargar información del usuario');
+    }
+  }
+
+  /**
+   * Elimina permanentemente un usuario (hard delete)
+   */
+  async deletePermanentlyUser(userId) {
+    try {
+      ui.showLoading('Eliminando permanentemente...');
+
+      await fetchWrapper.delete(`/users/${userId}/permanent`);
+
+      ui.hideLoading();
+      ui.success('Usuario eliminado permanentemente');
+
+      // Recargar usuarios
+      await this.loadUsers();
+
+      // Cerrar modal
+      const modal = document.querySelector('.modal-backdrop');
+      if (modal) ui.closeModal(modal);
+
+    } catch (error) {
+      ui.hideLoading();
+      console.error('Error permanently deleting user:', error);
+
+      const requestId = error.data?.request_id;
+      let errorMessage = 'Error al eliminar usuario permanentemente';
+
+      if (error.status === 400) {
+        errorMessage = 'Solo se pueden eliminar permanentemente usuarios inactivos';
+      } else if (error.status === 403) {
         errorMessage = 'No tienes permisos para eliminar este usuario';
-      } else if (error.status === 409) {
-        errorMessage = 'No se puede eliminar el usuario porque tiene archivos asociados';
       } else if (error.data?.detail) {
         errorMessage = error.data.detail;
       }
