@@ -49,7 +49,7 @@ async def read_files(
     """
     Retrieve files with filtering based on permissions
     """
-    query = db.query(File)
+    query = db.query(File).join(Folder, File.folder_id == Folder.id)
 
     # Apply permission-based filtering
     if current_user.role != "SUPER_ADMIN":
@@ -57,6 +57,9 @@ async def read_files(
             query = query.filter(File.dependency_id == current_user.dependency_id)
         else:
             return {"items": [], "total": 0}
+
+    # EXCLUIR archivos en carpetas "deprecados" del listado principal
+    query = query.filter(~Folder.name.ilike('%deprecados%'))
 
     # Apply user filters
     if folder_id:
@@ -444,154 +447,7 @@ async def read_file(
 
     return file
 
-@router.put("/{file_id}", response_model=FileResponse, responses={
-    200: {"model": FileResponse},
-    403: {"model": ErrorResponse},
-    404: {"model": NotFoundResponse},
-    415: {"model": ErrorResponse}
-})
-async def update_file(
-    file_id: str,
-    file: UploadFile = FastAPIFile(...),
-    current_user: User = Depends(require_worker_or_higher),
-    db: Session = Depends(get_db)
-):
-    """
-    Replace/update an existing file with a new version
-    """
-    # Get existing file
-    existing_file = db.query(File).filter(File.id == file_id).first()
-    if not existing_file or existing_file.is_deleted:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="File not found"
-        )
-
-    # Check permissions
-    if current_user.role not in ["SUPER_ADMIN", "ADMIN_DEP"]:
-        if current_user.dependency_id != existing_file.dependency_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied. You can only update files in your dependency."
-            )
-
-    # Validate MIME type
-    if not storage_service.validate_mime_type(file.content_type):
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=f"Unsupported file type: {file.content_type}"
-        )
-
-    # Get dependency and folder
-    dependency = db.query(Dependency).filter(Dependency.id == existing_file.dependency_id).first()
-    folder = db.query(Folder).filter(Folder.id == existing_file.folder_id).first()
-
-    if not dependency or not folder:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="File metadata corrupted"
-        )
-
-    # Read new file content
-    new_content = await file.read()
-    new_size = len(new_content)
-    
-    # Validate size
-    if new_size > settings.max_upload_size_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File size exceeds maximum allowed size of {settings.max_upload_size_mb}MB"
-        )
-
-    # Calculate new checksum
-    new_checksum = storage_service.compute_checksum(new_content)
-
-    # Get old file path
-    old_file_path = storage_service.get_file_path(
-        dependency.code, folder.path, existing_file.stored_name
-    )
-
-    # Create version backup (move old file to versions directory)
-    version_info = {
-        "version": existing_file.version + 1,
-        "previous_version": existing_file.version,
-        "previous_name": existing_file.original_name,
-        "previous_size": existing_file.size_bytes,
-        "previous_checksum": existing_file.checksum_sha256,
-        "previous_mime": existing_file.mime_type,
-        "updated_by": current_user.email,
-        "updated_at": datetime.utcnow().isoformat()
-    }
-
-    # Generate new stored name (keep extension from new file)
-    new_extension = Path(file.filename).suffix
-    new_stored_name = f"{uuid.uuid4()}{new_extension}"
-
-    try:
-        # Save new file
-        new_file_path = storage_service.save_file(
-            new_content, dependency.code, folder.path, new_stored_name
-        )
-
-        # Update database
-        existing_file.original_name = file.filename
-        existing_file.stored_name = new_stored_name
-        existing_file.size_bytes = new_size
-        existing_file.mime_type = file.content_type
-        existing_file.checksum_sha256 = new_checksum
-        existing_file.version = existing_file.version + 1
-        existing_file.updated_at = datetime.utcnow()
-        
-        # Store version info in metadata
-        if not existing_file.metadata:
-            existing_file.metadata = {}
-        if "versions" not in existing_file.metadata:
-            existing_file.metadata["versions"] = []
-        existing_file.metadata["versions"].append(version_info)
-
-        # Audit log
-        audit_service.log_action(
-            db=db,
-            user=current_user,
-            action_type="UPDATE",
-            target_type="FILE",
-            target_id=existing_file.id,
-            details={
-                "filename": file.filename,
-                "previous_version": version_info["previous_version"],
-                "new_version": existing_file.version,
-                "size": new_size,
-                "mime_type": file.content_type
-            },
-            auto_commit=False
-        )
-
-        # Commit changes
-        db.commit()
-        db.refresh(existing_file)
-
-        # Delete old physical file after successful DB commit
-        try:
-            if old_file_path.exists():
-                old_file_path.unlink()
-        except Exception as e:
-            logger.warning(f"Failed to delete old file {old_file_path}: {e}")
-
-        return existing_file
-
-    except Exception as e:
-        logger.error(f"Error updating file: {e}")
-        db.rollback()
-        # Clean up new file if it was created
-        try:
-            if new_file_path and new_file_path.exists():
-                new_file_path.unlink()
-        except:
-            pass
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update file"
-        )
+# ELIMINADO: Endpoint duplicado movido más abajo con sistema de versionado
 
 @router.get("/{file_id}/preview", responses={
     200: {"description": "File preview (inline display)"},
@@ -785,128 +641,195 @@ async def update_file(
     db: Session = Depends(get_db)
 ):
     """
-    Update file content (creates new version)
+    Update file content - moves old version to 'deprecados' folder and creates new version
     """
-    # Get existing file
-    existing_file = db.query(File).filter(File.id == file_id).first()
-    if not existing_file or existing_file.is_deleted:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="File not found"
-        )
-
-    # Check permissions
-    can_update = False
-    if current_user.role == "SUPER_ADMIN":
-        can_update = True
-    elif current_user.role in ["ADMIN_DEP", "WORKER"]:
-        if existing_file.dependency_id == current_user.dependency_id:
-            if current_user.role == "ADMIN_DEP" or existing_file.uploaded_by == current_user.id:
-                can_update = True
-
-    if not can_update:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied. You don't have permission to update this file."
-        )
-
-    # Parse metadata
-    file_metadata = None
-    if metadata:
-        try:
-            file_metadata = FileMetadata.parse_raw(metadata)
-        except Exception as e:
+    try:
+        # Get existing file
+        existing_file = db.query(File).filter(File.id == file_id).first()
+        if not existing_file or existing_file.is_deleted:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid metadata JSON: {e}"
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="File not found"
             )
 
-    # Validate new file
-    if not storage_service.validate_file_size(file.size):
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File too large. Maximum size: {settings.max_upload_size_mb}MB"
+        # Check permissions
+        can_update = False
+        if current_user.role == "SUPER_ADMIN":
+            can_update = True
+        elif current_user.role in ["ADMIN_DEP", "WORKER"]:
+            if existing_file.dependency_id == current_user.dependency_id:
+                if current_user.role == "ADMIN_DEP" or existing_file.uploaded_by == current_user.id:
+                    can_update = True
+
+        if not can_update:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. You don't have permission to update this file."
+            )
+
+        # Parse metadata
+        file_metadata = None
+        if metadata:
+            try:
+                file_metadata = FileMetadata.parse_raw(metadata)
+            except Exception as e:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid metadata JSON: {e}"
+                )
+
+        # Validate new file
+        if not storage_service.validate_file_size(file.size):
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"File too large. Maximum size: {settings.max_upload_size_mb}MB"
+            )
+
+        if not storage_service.validate_mime_type(file.content_type):
+            raise HTTPException(
+                status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                detail=f"Unsupported file type: {file.content_type}"
+            )
+
+        # Read new content
+        new_content = await file.read()
+
+        # Get dependency and folder
+        dependency = db.query(Dependency).filter(Dependency.id == existing_file.dependency_id).first()
+        current_folder = db.query(Folder).filter(Folder.id == existing_file.folder_id).first()
+
+        if not dependency or not current_folder:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="File metadata corrupted"
+            )
+
+        # 1. Crear o obtener carpeta "deprecados" en la raíz de la dependencia
+        # Buscar carpeta raíz por dependency_id y parent_id = NULL (independiente del nombre)
+        root_folder = db.query(Folder).filter(
+            and_(
+                Folder.dependency_id == dependency.id,
+                Folder.parent_id == None
+            )
+        ).first()
+
+        if not root_folder:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Root folder not found for dependency {dependency.code}"
+            )
+
+        # Buscar carpeta "deprecados"
+        deprecated_folder = db.query(Folder).filter(
+            and_(
+                Folder.dependency_id == dependency.id,
+                Folder.parent_id == root_folder.id,
+                Folder.name == "deprecados"
+            )
+        ).first()
+
+        # Crear carpeta "deprecados" si no existe
+        if not deprecated_folder:
+            deprecated_folder_path = f"{root_folder.path}/deprecados"
+            deprecated_folder = Folder(
+                id=str(uuid.uuid4()),
+                name="deprecados",
+                path=deprecated_folder_path,
+                parent_id=root_folder.id,
+                dependency_id=dependency.id,
+                created_by=current_user.id,
+                updated_by=current_user.id
+            )
+            db.add(deprecated_folder)
+            db.flush()
+
+            # Crear directorio físico
+            deprecated_physical_path = Path(settings.storage_path) / dependency.code / "deprecados"
+            deprecated_physical_path.mkdir(parents=True, exist_ok=True)
+
+            logger.info(f"Created 'deprecados' folder for dependency {dependency.code}")
+
+        # 2. Mover archivo antiguo a carpeta "deprecados"
+        old_file_path = storage_service.get_file_path(
+            dependency.code, current_folder.path, existing_file.stored_name
         )
 
-    if not storage_service.validate_mime_type(file.content_type):
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=f"Unsupported file type: {file.content_type}"
+        # Crear registro en DB para archivo deprecado con nombre versionado y prefijo "deprecado"
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        deprecated_name = f"deprecado_{Path(existing_file.original_name).stem}_v{existing_file.version}_{timestamp}{Path(existing_file.original_name).suffix}"
+        deprecated_stored_name = f"{str(uuid.uuid4())}{Path(existing_file.original_name).suffix}"
+
+        deprecated_file = File(
+            id=str(uuid.uuid4()),
+            original_name=deprecated_name,
+            stored_name=deprecated_stored_name,
+            mime_type=existing_file.mime_type,
+            size_bytes=existing_file.size_bytes,
+            checksum_sha256=existing_file.checksum_sha256,
+            folder_id=deprecated_folder.id,
+            dependency_id=dependency.id,
+            uploaded_by=existing_file.uploaded_by,
+            version=existing_file.version,
+            main_file_id=existing_file.id,  # Referencia al archivo actualizado
+            file_metadata={"deprecated_at": timestamp, "replaced_by_user": current_user.id}
+        )
+        db.add(deprecated_file)
+        db.flush()
+
+        # Mover archivo físico a carpeta deprecados
+        deprecated_physical_path = storage_service.get_file_path(
+            dependency.code, deprecated_folder.path, deprecated_stored_name
+        )
+        
+        if old_file_path.exists():
+            import shutil
+            deprecated_physical_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(old_file_path), str(deprecated_physical_path))
+            logger.info(f"Moved old file to deprecados: {deprecated_physical_path}")
+
+        # 3. Guardar nuevo archivo en la ubicación original
+        temp_id, temp_path = storage_service.save_temp_file(new_content, file.filename)
+        checksum = storage_service.calculate_checksum(temp_path)
+
+        # Generate new stored name
+        new_stored_name = f"{str(uuid.uuid4())}{Path(file.filename).suffix}"
+        final_path = storage_service.get_file_path(
+            dependency.code, current_folder.path, new_stored_name
         )
 
-    # Read new content
-    new_content = await file.read()
+        if not storage_service.move_temp_to_final(temp_path, final_path):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to save updated file"
+            )
 
-    # Get dependency and folder
-    dependency = db.query(Dependency).filter(Dependency.id == existing_file.dependency_id).first()
-    folder = db.query(Folder).filter(Folder.id == existing_file.folder_id).first()
+        # 4. Actualizar registro del archivo principal
+        existing_file.original_name = file.filename
+        existing_file.stored_name = new_stored_name
+        existing_file.mime_type = file.content_type
+        existing_file.size_bytes = len(new_content)
+        existing_file.checksum_sha256 = checksum
+        existing_file.version += 1
+        existing_file.updated_at = datetime.utcnow()
+        if file_metadata:
+            existing_file.file_metadata = file_metadata.dict()
 
-    if not dependency or not folder:
+        db.commit()
+        db.refresh(existing_file)
+
+        logger.info(f"File {file_id} updated successfully. Old version moved to deprecados folder.")
+
+        return existing_file
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating file: {e}")
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="File metadata corrupted"
+            detail=f"Failed to update file: {str(e)}"
         )
-
-    # Create version backup of current file
-    current_path = storage_service.get_file_path(
-        dependency.code, folder.path, existing_file.stored_name
-    )
-
-    if current_path.exists():
-        version_filename = storage_service.generate_version_filename(
-            existing_file.id, existing_file.version, existing_file.original_name
-        )
-        version_path = storage_service.get_version_path(
-            dependency.code, folder.path, version_filename
-        )
-
-        if not storage_service.create_file_version(current_path, version_path):
-            logger.warning(f"Failed to create version backup for file {file_id}")
-
-    # Save new file to temp
-    temp_id, temp_path = storage_service.save_temp_file(new_content, file.filename)
-    checksum = storage_service.calculate_checksum(temp_path)
-
-    # Generate new stored name
-    new_stored_name = f"{str(uuid.uuid4())}{Path(file.filename).suffix}"
-    final_path = storage_service.get_file_path(
-        dependency.code, folder.path, new_stored_name
-    )
-
-    if not storage_service.move_temp_to_final(temp_path, final_path):
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to save updated file"
-        )
-
-    # Update file record
-    existing_file.original_name = file.filename
-    existing_file.stored_name = new_stored_name
-    existing_file.mime_type = file.content_type
-    existing_file.size_bytes = len(new_content)
-    existing_file.checksum_sha256 = checksum
-    existing_file.version += 1
-    if file_metadata:
-        existing_file.file_metadata = file_metadata.dict()
-
-    db.commit()
-    db.refresh(existing_file)
-
-    # Audit log update
-    audit_service.log_action(
-        db=db,
-        user=current_user,
-        action_type="UPDATE",
-        target_type="FILE",
-        target_id=existing_file.id,
-        details={
-            "filename": file.filename,
-            "new_version": existing_file.version,
-            "size": len(new_content)
-        }
-    )
-
-    return existing_file
 
 @router.get("/{file_id}/versions", response_model=FileVersionsResponse, responses={
     200: {"model": FileVersionsResponse},

@@ -196,27 +196,30 @@ class UI {
   /**
    * Modal de confirmación
    */
-  confirm(title, message, onConfirm) {
-    return this.showModal(title, `<p>${message}</p>`, {
-      buttons: [
-        {
-          text: 'Cancelar',
-          class: 'btn btn-secondary'
-        },
-        {
-          text: 'Confirmar',
-          class: 'btn btn-primary',
-          onClick: onConfirm
-        }
-      ]
+  confirm(title, message) {
+    return new Promise((resolve) => {
+      this.showModal(title, `<p>${message}</p>`, {
+        buttons: [
+          {
+            text: 'Cancelar',
+            class: 'btn btn-secondary',
+            onClick: () => resolve(false)
+          },
+          {
+            text: 'Confirmar',
+            class: 'btn btn-primary',
+            onClick: () => resolve(true)
+          }
+        ]
+      });
     });
   }
 
   /**
    * Alias para confirm
    */
-  showConfirm(title, message, onConfirm) {
-    return this.confirm(title, message, onConfirm);
+  showConfirm(title, message) {
+    return this.confirm(title, message);
   }
 
   /**

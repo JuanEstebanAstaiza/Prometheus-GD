@@ -61,18 +61,11 @@ class FilesManager {
    * Configura los event listeners
    */
   setupEventListeners() {
-    // Buscador con autocomplete
+    // Buscador en tiempo real (sin autocomplete)
     const searchInput = document.getElementById('fileSearch');
     if (searchInput) {
       searchInput.addEventListener('input', (e) => {
         this.handleSearch(e.target.value);
-      });
-
-      // Cerrar autocomplete al hacer clic fuera
-      document.addEventListener('click', (e) => {
-        if (!searchInput.contains(e.target)) {
-          this.hideAutocomplete();
-        }
       });
     }
 
@@ -113,7 +106,7 @@ class FilesManager {
   }
 
   /**
-   * Maneja la búsqueda con debounce
+   * Maneja la búsqueda con debounce (sin autocomplete)
    */
   handleSearch(searchTerm) {
     // Limpiar timeout anterior
@@ -121,10 +114,10 @@ class FilesManager {
       clearTimeout(this.searchTimeout);
     }
 
-    // Si está vacío, ocultar autocomplete y recargar archivos
+    // Si está vacío, limpiar filtro y recargar
     if (!searchTerm || searchTerm.trim() === '') {
-      this.hideAutocomplete();
       this.currentFilters.search = '';
+      this.currentPage = 0;
       this.loadFiles();
       return;
     }
@@ -132,70 +125,15 @@ class FilesManager {
     // Debounce: esperar 300ms antes de buscar
     this.searchTimeout = setTimeout(async () => {
       this.currentFilters.search = searchTerm.trim();
+      this.currentPage = 0; // Resetear a primera página
       
       try {
-        // Buscar archivos
+        // Buscar y mostrar resultados directamente en la tabla
         await this.loadFiles();
-        
-        // Mostrar resultados en autocomplete
-        this.showAutocomplete(this.files);
       } catch (error) {
         console.error('[files.js] Error en búsqueda:', error);
       }
     }, 300);
-  }
-
-  /**
-   * Muestra el autocomplete con los resultados
-   */
-  showAutocomplete(files) {
-    const autocompleteResults = document.getElementById('autocompleteResults');
-    if (!autocompleteResults) return;
-
-    if (files.length === 0) {
-      autocompleteResults.innerHTML = `
-        <div class="autocomplete-item">
-          <div class="autocomplete-item-title">No se encontraron archivos</div>
-        </div>
-      `;
-      autocompleteResults.classList.add('show');
-      return;
-    }
-
-    // Mostrar solo los primeros 5 resultados en el autocomplete
-    const limitedFiles = files.slice(0, 5);
-    
-    autocompleteResults.innerHTML = limitedFiles.map(file => `
-      <div class="autocomplete-item" data-file-id="${file.id}">
-        <div class="autocomplete-item-title">${this.escapeHtml(file.original_name || file.name)}</div>
-        <div class="autocomplete-item-meta">
-          ${this.formatBytes(file.size_bytes || 0)} • 
-          ${new Date(file.created_at).toLocaleDateString()} • 
-          ${this.escapeHtml(file.folder_path || 'Sin carpeta')}
-        </div>
-      </div>
-    `).join('');
-
-    // Agregar event listeners a los items
-    autocompleteResults.querySelectorAll('.autocomplete-item').forEach(item => {
-      item.addEventListener('click', () => {
-        const fileId = item.dataset.fileId;
-        this.showFileDetails(fileId);
-        this.hideAutocomplete();
-      });
-    });
-
-    autocompleteResults.classList.add('show');
-  }
-
-  /**
-   * Oculta el autocomplete
-   */
-  hideAutocomplete() {
-    const autocompleteResults = document.getElementById('autocompleteResults');
-    if (autocompleteResults) {
-      autocompleteResults.classList.remove('show');
-    }
   }
 
   /**

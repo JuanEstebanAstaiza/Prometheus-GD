@@ -565,10 +565,14 @@
   display: flex;
   gap: 1rem;
   align-items: center;
+  position: relative;
+  z-index: 10;
 }
 
 .search-box {
   position: relative;
+  width: 100%;
+  flex: 1;
 }
 
 .autocomplete-results {
@@ -582,7 +586,7 @@
   border-radius: 0 0 var(--radius-md) var(--radius-md);
   max-height: 300px;
   overflow-y: auto;
-  z-index: 1000;
+  z-index: 10000;
   display: none;
   box-shadow: var(--shadow-md);
 }

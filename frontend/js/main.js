@@ -430,10 +430,9 @@ function registerRoutes() {
                   type="text" 
                   id="fileSearch" 
                   class="form-input" 
-                  placeholder="Buscar archivos por nombre, tipo, o contenido..."
+                  placeholder="Buscar archivos por nombre o tipo..."
                   autocomplete="off"
                 >
-                <div class="autocomplete-results" id="autocompleteResults"></div>
               </div>
               
               <button class="btn btn-secondary" id="toggleFiltersBtn">
