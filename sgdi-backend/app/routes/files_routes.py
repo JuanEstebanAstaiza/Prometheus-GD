@@ -49,14 +49,23 @@ async def read_files(
     """
     Retrieve files with filtering based on permissions
     """
-    query = db.query(File).join(Folder, File.folder_id == Folder.id)
+    query = db.query(File).join(Folder, File.folder_id == Folder.id).join(
+        Dependency, File.dependency_id == Dependency.id
+    )
 
     # Apply permission-based filtering
     if current_user.role != "SUPER_ADMIN":
         if current_user.dependency_id:
-            query = query.filter(File.dependency_id == current_user.dependency_id)
+            # Users can see files from their dependency OR from GLOBAL dependency
+            query = query.filter(
+                or_(
+                    File.dependency_id == current_user.dependency_id,
+                    Dependency.code == "GLOBAL"
+                )
+            )
         else:
-            return {"items": [], "total": 0}
+            # Users without dependency can only see GLOBAL
+            query = query.filter(Dependency.code == "GLOBAL")
 
     # EXCLUIR archivos en carpetas "deprecados" del listado principal
     query = query.filter(~Folder.name.ilike('%deprecados%'))

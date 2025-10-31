@@ -42,12 +42,16 @@ async def get_dependency_folder_tree(
             detail="Dependency not found"
         )
 
-    # Check permissions
+    # Check permissions: Users can view their own dependency OR GLOBAL
     if current_user.role != "SUPER_ADMIN":
-        if current_user.dependency_id != dependency_id:
+        # Check if trying to access GLOBAL
+        if dependency.code == "GLOBAL":
+            # Everyone can view GLOBAL folders
+            pass
+        elif current_user.dependency_id != dependency_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied. You can only view folders in your assigned dependency."
+                detail="Access denied. You can only view folders in your assigned dependency or GLOBAL."
             )
 
     # Build and return folder tree
