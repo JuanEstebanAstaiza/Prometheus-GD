@@ -19,6 +19,47 @@ from ..services.audit_service import audit_service
 
 router = APIRouter()
 
+def _delete_folder_recursive(db: Session, folder_id: str):
+    """
+    Elimina una carpeta y todo su contenido recursivamente.
+    Elimina desde las hojas hacia la raíz para evitar violaciones de foreign key.
+    """
+    from sqlalchemy import text
+    
+    # Obtener carpeta
+    folder = db.query(Folder).filter(Folder.id == folder_id).first()
+    if not folder:
+        return
+    
+    # 1. Obtener todas las subcarpetas
+    subfolders = db.query(Folder).filter(Folder.parent_id == folder_id).all()
+    
+    # 2. Eliminar recursivamente cada subcarpeta
+    for subfolder in subfolders:
+        _delete_folder_recursive(db, subfolder.id)
+    
+    # 3. Eliminar archivos que referencien a archivos en esta carpeta
+    # (archivos deprecados pueden estar en cualquier carpeta)
+    db.execute(
+        text("""
+            DELETE FROM sgdi.files 
+            WHERE main_file_id IN (
+                SELECT id FROM sgdi.files WHERE folder_id = :folder_id
+            )
+        """),
+        {"folder_id": folder_id}
+    )
+    
+    # 4. Eliminar archivos de esta carpeta
+    db.execute(
+        text("DELETE FROM sgdi.files WHERE folder_id = :folder_id"),
+        {"folder_id": folder_id}
+    )
+    
+    # 5. Finalmente, eliminar esta carpeta
+    db.delete(folder)
+    # No hacer commit aquí, se hace en el endpoint principal
+
 @router.get("/dependencies/{dependency_id}/tree", response_model=List[FolderTreeNode], responses={
     200: {"model": List[FolderTreeNode]},
     403: {"model": ErrorResponse},
@@ -356,8 +397,14 @@ async def delete_folder(
             message=f"Folder contains {stats['subfolders']} subfolders and {stats['files']} files. Use force=true to delete."
         )
 
-    # Delete folder (cascade will handle subfolders and files)
-    db.delete(folder)
+    # Delete folder and its contents recursively
+    if force and has_contents:
+        # Eliminar recursivamente desde las hojas hacia la raíz
+        _delete_folder_recursive(db, folder_id)
+    else:
+        # Carpeta vacía, eliminar directamente
+        db.delete(folder)
+    
     db.commit()
 
     # Log audit event

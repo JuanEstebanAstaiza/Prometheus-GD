@@ -418,12 +418,12 @@ class BackupsManager {
         <div class="form-group">
           <label for="restoreStrategy" class="form-label">Estrategia de Restauración *</label>
           <select id="restoreStrategy" class="form-input" required>
-            <option value="create_new_ids">Crear Nuevos IDs (recomendado)</option>
-            <option value="overwrite">Sobrescribir Existentes (⚠️ peligroso)</option>
+            <option value="overwrite" selected>Restaurar/Actualizar (recomendado)</option>
+            <option value="create_new_ids">Crear Duplicados con Nuevos IDs</option>
           </select>
           <p class="text-muted" style="font-size: 0.875rem; margin-top: 0.5rem;">
-            <strong>create_new_ids:</strong> Crea nuevas entradas con IDs diferentes, no afecta datos existentes<br>
-            <strong>overwrite:</strong> Sobrescribe entradas con el mismo ID (puede causar pérdida de datos)
+            <strong>Restaurar/Actualizar:</strong> Restaura los datos del backup actualizando los existentes o creando los faltantes. NO crea duplicados.<br>
+            <strong>Crear Duplicados:</strong> Crea nuevas entidades con IDs diferentes (útil para migrar datos entre sistemas)
           </p>
         </div>
 
@@ -518,6 +518,11 @@ class BackupsManager {
       
       formData.append('strategy', strategy);
       formData.append('simulate', simulateOnly.toString());
+      
+      // Si no es simulación, agregar confirmación explícita
+      if (!simulateOnly) {
+        formData.append('confirm', 'true');
+      }
 
       const result = await fetchWrapper.upload('/admin/backups/restore', formData);
 
@@ -735,21 +740,28 @@ class BackupsManager {
         <div style="padding: 1rem; background: var(--color-gray-50); border-radius: var(--radius-md);">
           <h4 style="margin-bottom: 1rem;">Resumen</h4>
           
-          ${result.dependencies_created ? `
+          ${result.dependencies_created || result.dependencies_updated ? `
             <div style="margin-bottom: 0.75rem;">
-              <strong>📁 Dependencias creadas:</strong> ${result.dependencies_created}
+              <strong>📁 Dependencias:</strong> 
+              ${result.dependencies_updated || 0} actualizadas, 
+              ${result.dependencies_created || 0} creadas
             </div>
           ` : ''}
 
-          ${result.folders_created ? `
+          ${result.folders_created || result.folders_updated ? `
             <div style="margin-bottom: 0.75rem;">
-              <strong>📂 Carpetas creadas:</strong> ${result.folders_created}
+              <strong>📂 Carpetas:</strong> 
+              ${result.folders_updated || 0} actualizadas, 
+              ${result.folders_created || 0} creadas
             </div>
           ` : ''}
 
-          ${result.files_created ? `
+          ${result.files_created || result.files_updated || result.files_restored ? `
             <div style="margin-bottom: 0.75rem;">
-              <strong>📄 Archivos restaurados:</strong> ${result.files_created}
+              <strong>📄 Archivos:</strong> 
+              ${result.files_updated || 0} actualizados, 
+              ${result.files_created || 0} creados
+              ${result.files_restored ? `, ${result.files_restored} físicos restaurados` : ''}
             </div>
           ` : ''}
 

@@ -687,16 +687,22 @@ class BackupService:
             with open(metadata_file, "r", encoding="utf-8") as f:
                 metadata = json.load(f)
 
-            # Validate checksum if provided
+            # Copy physical files to staging area first
+            staging_files_dir = staging_dir / "staged_files"
+            staging_files_dir.mkdir()
+            
             files_dir = backup_content_dir / "files"
             if files_dir.exists():
-                # Copy files to staging area first
-                staging_files_dir = staging_dir / "staged_files"
-                staging_files_dir.mkdir()
-
-                for file_path in files_dir.iterdir():
-                    if file_path.is_file():
-                        shutil.copy2(file_path, staging_files_dir / file_path.name)
+                # Copy files recursively preserving directory structure
+                for root, dirs, files in os.walk(files_dir):
+                    for file in files:
+                        source_file = Path(root) / file
+                        # Preserve relative path structure
+                        rel_path = source_file.relative_to(files_dir)
+                        target_file = staging_files_dir / rel_path
+                        target_file.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(source_file, target_file)
+                        logger.debug(f"Staged file: {rel_path}")
 
             # Start transaction
             with db.begin_nested():
@@ -714,8 +720,8 @@ class BackupService:
             db.commit()
 
             # Move staged files to final location
-            if staging_files_dir.exists():
-                result["files_restored"] = self._finalize_file_restore(staging_files_dir, metadata)
+            if staging_files_dir.exists() and any(staging_files_dir.iterdir()):
+                result["files_restored"] = self._finalize_file_restore(staging_files_dir, metadata, result.get("id_mapping", {}))
 
             result["completed_at"] = datetime.utcnow()
             result["status"] = "completed"
@@ -810,7 +816,8 @@ class BackupService:
         id_mapping = {}
         result = {"dependencies_created": 0, "folders_created": 0, "files_created": 0}
 
-        # Create dependencies with new IDs
+        # PASO 1: Create dependencies with new IDs
+        logger.info("Restoring dependencies...")
         for dep_data in metadata.get("dependencies", []):
             new_id = str(uuid.uuid4())
             id_mapping[dep_data["id"]] = new_id
@@ -822,15 +829,28 @@ class BackupService:
             )
             db.add(dependency)
             result["dependencies_created"] += 1
+        
+        # Flush to ensure dependencies exist before folders
+        db.flush()
+        logger.info(f"Created {result['dependencies_created']} dependencies")
 
-        # Create folders with new IDs and updated references
-        for folder_data in metadata.get("folders", []):
+        # PASO 2: Create folders with new IDs and updated references
+        # Sort folders by path depth to ensure parent folders are created first
+        folders_sorted = sorted(
+            metadata.get("folders", []),
+            key=lambda f: f.get("path", "").count("/")
+        )
+        
+        logger.info("Restoring folders...")
+        for folder_data in folders_sorted:
             new_id = str(uuid.uuid4())
             id_mapping[folder_data["id"]] = new_id
 
             # Update dependency reference if it was remapped
             dep_id = id_mapping.get(folder_data.get("dependency_id"), folder_data.get("dependency_id"))
-            parent_id = id_mapping.get(folder_data.get("parent_id"), folder_data.get("parent_id"))
+            parent_id = folder_data.get("parent_id")
+            if parent_id:
+                parent_id = id_mapping.get(parent_id, parent_id)
 
             folder = Folder(
                 id=new_id,
@@ -843,8 +863,13 @@ class BackupService:
             )
             db.add(folder)
             result["folders_created"] += 1
+        
+        # Flush to ensure folders exist before files
+        db.flush()
+        logger.info(f"Created {result['folders_created']} folders")
 
-        # Create files with new IDs and updated references
+        # PASO 3: Create files with new IDs and updated references
+        logger.info("Restoring files...")
         for file_data in metadata.get("files", []):
             new_id = str(uuid.uuid4())
             id_mapping[file_data["id"]] = new_id
@@ -853,12 +878,27 @@ class BackupService:
             original_ext = Path(file_data["original_name"]).suffix
             new_stored_name = f"{new_id}{original_ext}"
 
-            # Update folder reference
-            folder_id = id_mapping.get(file_data.get("folder_id"), file_data.get("folder_id"))
-            dep_id = id_mapping.get(file_data.get("dependency_id"), file_data.get("dependency_id"))
+            # Update folder reference - MUST exist now
+            folder_id = file_data.get("folder_id")
+            if folder_id:
+                # Check if folder_id was remapped (new IDs) or exists in DB
+                if folder_id in id_mapping:
+                    folder_id = id_mapping[folder_id]
+                else:
+                    # Verify folder exists in DB
+                    existing_folder = db.query(Folder).filter(Folder.id == folder_id).first()
+                    if not existing_folder:
+                        logger.warning(f"Skipping file {file_data['original_name']} - folder {folder_id} not found")
+                        continue
+
+            dep_id = file_data.get("dependency_id")
+            if dep_id:
+                dep_id = id_mapping.get(dep_id, dep_id)
 
             # Update main_file_id reference
-            main_file_id = id_mapping.get(file_data.get("main_file_id"), file_data.get("main_file_id"))
+            main_file_id = file_data.get("main_file_id")
+            if main_file_id:
+                main_file_id = id_mapping.get(main_file_id, main_file_id)
 
             file_obj = File(
                 id=new_id,
@@ -870,7 +910,7 @@ class BackupService:
                 folder_id=folder_id,
                 dependency_id=dep_id,
                 uploaded_by=file_data.get("uploaded_by"),
-                version=file_data["version"],
+                version=file_data.get("version", 1),
                 is_deleted=file_data.get("is_deleted", False),
                 main_file_id=main_file_id,
                 file_metadata=file_data.get("file_metadata"),
@@ -879,6 +919,10 @@ class BackupService:
             )
             db.add(file_obj)
             result["files_created"] += 1
+        
+        # Final flush
+        db.flush()
+        logger.info(f"Created {result['files_created']} files")
 
         # Store ID mapping for file restoration
         result["id_mapping"] = id_mapping
@@ -888,50 +932,205 @@ class BackupService:
 
     def _restore_with_overwrite(self, db, metadata: Dict[str, Any], staging_files_dir: Path,
                                preserve_existing: bool) -> Dict[str, Any]:
-        """Restore data overwriting existing records"""
-        # This is dangerous - only for clean restores
-        result = {"dependencies_created": 0, "folders_created": 0, "files_created": 0}
+        """
+        Restore data by updating existing records or creating new ones (MERGE strategy).
+        This does NOT create duplicates - it updates existing entities by ID.
+        """
+        result = {
+            "dependencies_created": 0, 
+            "dependencies_updated": 0,
+            "folders_created": 0, 
+            "folders_updated": 0,
+            "files_created": 0,
+            "files_updated": 0,
+            "id_mapping": {}
+        }
 
-        # For now, implement as create_new_ids but warn about overwrite
-        logger.warning("Overwrite strategy not fully implemented - using create_new_ids")
-        return self._restore_with_new_ids(db, metadata, staging_files_dir, "overwrite")
+        logger.info("Starting MERGE restore (update existing or create new)")
 
-    def _finalize_file_restore(self, staging_files_dir: Path, metadata: Dict[str, Any]) -> int:
-        """Move staged files to final storage location"""
+        # PASO 1: Restore/Update Dependencies
+        for dep_data in metadata.get("dependencies", []):
+            existing_dep = db.query(Dependency).filter(Dependency.id == dep_data["id"]).first()
+            
+            if existing_dep:
+                # Update existing dependency
+                existing_dep.name = dep_data["name"]
+                existing_dep.code = dep_data["code"]
+                result["dependencies_updated"] += 1
+                logger.debug(f"Updated dependency: {dep_data['code']}")
+            else:
+                # Create new dependency
+                new_dep = Dependency(
+                    id=dep_data["id"],
+                    name=dep_data["name"],
+                    code=dep_data["code"]
+                )
+                db.add(new_dep)
+                result["dependencies_created"] += 1
+                logger.debug(f"Created dependency: {dep_data['code']}")
+        
+        db.flush()
+        logger.info(f"Dependencies: {result['dependencies_updated']} updated, {result['dependencies_created']} created")
+
+        # PASO 2: Restore/Update Folders (sorted by depth)
+        folders_sorted = sorted(
+            metadata.get("folders", []),
+            key=lambda f: f.get("path", "").count("/")
+        )
+        
+        for folder_data in folders_sorted:
+            existing_folder = db.query(Folder).filter(Folder.id == folder_data["id"]).first()
+            
+            if existing_folder:
+                # Update existing folder
+                existing_folder.name = folder_data["name"]
+                existing_folder.path = folder_data["path"]
+                existing_folder.dependency_id = folder_data.get("dependency_id")
+                existing_folder.parent_id = folder_data.get("parent_id")
+                result["folders_updated"] += 1
+                logger.debug(f"Updated folder: {folder_data['path']}")
+            else:
+                # Create new folder
+                new_folder = Folder(
+                    id=folder_data["id"],
+                    name=folder_data["name"],
+                    path=folder_data["path"],
+                    dependency_id=folder_data.get("dependency_id"),
+                    parent_id=folder_data.get("parent_id"),
+                    created_by=folder_data.get("created_by"),
+                    updated_by=folder_data.get("updated_by")
+                )
+                db.add(new_folder)
+                result["folders_created"] += 1
+                logger.debug(f"Created folder: {folder_data['path']}")
+        
+        db.flush()
+        logger.info(f"Folders: {result['folders_updated']} updated, {result['folders_created']} created")
+
+        # PASO 3: Restore/Update Files
+        for file_data in metadata.get("files", []):
+            # Verify folder exists
+            folder_id = file_data.get("folder_id")
+            if folder_id:
+                existing_folder = db.query(Folder).filter(Folder.id == folder_id).first()
+                if not existing_folder:
+                    logger.warning(f"Skipping file {file_data['original_name']} - folder {folder_id} not found")
+                    continue
+            
+            existing_file = db.query(File).filter(File.id == file_data["id"]).first()
+            
+            if existing_file:
+                # Update existing file metadata
+                existing_file.original_name = file_data["original_name"]
+                existing_file.mime_type = file_data["mime_type"]
+                existing_file.size_bytes = file_data["size_bytes"]
+                existing_file.checksum_sha256 = file_data["checksum_sha256"]
+                existing_file.folder_id = folder_id
+                existing_file.dependency_id = file_data.get("dependency_id")
+                existing_file.version = file_data.get("version", 1)
+                existing_file.is_deleted = file_data.get("is_deleted", False)
+                existing_file.main_file_id = file_data.get("main_file_id")
+                existing_file.file_metadata = file_data.get("file_metadata")
+                result["files_updated"] += 1
+                logger.debug(f"Updated file: {file_data['original_name']}")
+            else:
+                # Create new file
+                new_file = File(
+                    id=file_data["id"],
+                    original_name=file_data["original_name"],
+                    stored_name=file_data["stored_name"],
+                    mime_type=file_data["mime_type"],
+                    size_bytes=file_data["size_bytes"],
+                    checksum_sha256=file_data["checksum_sha256"],
+                    folder_id=folder_id,
+                    dependency_id=file_data.get("dependency_id"),
+                    uploaded_by=file_data.get("uploaded_by"),
+                    version=file_data.get("version", 1),
+                    is_deleted=file_data.get("is_deleted", False),
+                    main_file_id=file_data.get("main_file_id"),
+                    file_metadata=file_data.get("file_metadata"),
+                    created_at=file_data.get("created_at"),
+                    updated_at=file_data.get("updated_at")
+                )
+                db.add(new_file)
+                result["files_created"] += 1
+                logger.debug(f"Created file: {file_data['original_name']}")
+        
+        db.flush()
+        logger.info(f"Files: {result['files_updated']} updated, {result['files_created']} created")
+
+        result["staging_files_dir"] = str(staging_files_dir)
+        return result
+
+    def _finalize_file_restore(self, staging_files_dir: Path, metadata: Dict[str, Any], 
+                               id_mapping: Dict[str, str] = None) -> int:
+        """
+        Move staged files to final storage location.
+        
+        Args:
+            staging_files_dir: Directory containing staged files
+            metadata: Backup metadata
+            id_mapping: Mapping of old IDs to new IDs (for create_new_ids strategy)
+        
+        Returns:
+            Number of files successfully restored
+        """
+        if id_mapping is None:
+            id_mapping = {}
+        
         files_restored = 0
+        db = SessionLocal()
 
-        for file_path in staging_files_dir.iterdir():
-            if file_path.is_file():
-                # Find corresponding metadata
-                stored_name = file_path.name
-                file_meta = None
-
-                for f in metadata.get("files", []):
-                    if f["stored_name"] == stored_name:
-                        file_meta = f
-                        break
-
-                if file_meta:
+        try:
+            # Walk through all files in staging directory (preserving structure)
+            for root, dirs, files in os.walk(staging_files_dir):
+                for file in files:
+                    source_path = Path(root) / file
+                    
+                    # Get relative path from staging dir
+                    rel_path = source_path.relative_to(staging_files_dir)
+                    
+                    # The structure should be: DEPENDENCY_CODE/folder/path/stored_name.ext
+                    parts = rel_path.parts
+                    if len(parts) < 2:
+                        logger.warning(f"Skipping file with invalid path structure: {rel_path}")
+                        continue
+                    
+                    dep_code = parts[0]
+                    stored_name = parts[-1]
+                    folder_path = "/".join(parts[1:-1]) if len(parts) > 2 else ""
+                    
                     try:
-                        # Get dependency code
-                        dep_code = self._get_dependency_code(file_meta["dependency_id"])
-
-                        # Get folder path (remove filename from full path)
-                        folder_path = file_meta.get("path", "")
-                        if "/" in folder_path:
-                            folder_path = "/".join(folder_path.split("/")[:-1])
-
+                        # If using new IDs, we need to get the new dependency code
+                        if id_mapping:
+                            # Find the dependency in metadata
+                            for dep_data in metadata.get("dependencies", []):
+                                old_dep_id = dep_data["id"]
+                                if dep_data["code"] == dep_code.replace("_RESTORED_", "_").split("_")[0]:
+                                    new_dep_id = id_mapping.get(old_dep_id, old_dep_id)
+                                    # Get new dependency code from DB
+                                    dep = db.query(Dependency).filter(Dependency.id == new_dep_id).first()
+                                    if dep:
+                                        dep_code = dep.code
+                                    break
+                        
                         # Move to final location
                         final_path = storage_service.get_file_path(dep_code, folder_path, stored_name)
                         final_path.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.move(str(file_path), str(final_path))
-
+                        shutil.copy2(source_path, final_path)
+                        
                         files_restored += 1
+                        logger.debug(f"Restored file: {dep_code}/{folder_path}/{stored_name}")
 
                     except Exception as e:
-                        logger.error(f"Failed to finalize file {stored_name}: {e}")
+                        logger.error(f"Failed to finalize file {rel_path}: {e}")
+                        continue
 
-        return files_restored
+            logger.info(f"Finalized {files_restored} physical files")
+            return files_restored
+
+        finally:
+            db.close()
 
 # Global backup service instance
 backup_service = BackupService()

@@ -14,14 +14,25 @@ class FoldersManager {
     this.currentFolder = null;
     this.foldersTree = null;
     this.expandedNodes = new Set();
+    this.initialized = false;
   }
 
   /**
    * Inicializa el módulo de carpetas
    */
   async init() {
+    // Evitar múltiples inicializaciones
+    if (this.initialized) {
+      console.log('[folders.js] Ya inicializado, recargando árbol de carpetas...');
+      if (this.currentDependency) {
+        await this.loadFolderTree(this.currentDependency);
+      }
+      return;
+    }
+    
     await this.loadDependencies();
     this.setupEventListeners();
+    this.initialized = true;
   }
 
   /**
@@ -85,11 +96,15 @@ class FoldersManager {
     const selector = document.getElementById('dependencySelector');
     if (!selector) return;
 
-    selector.innerHTML = dependencies.map(dep => `
+    // Limpiar event listeners previos
+    const newSelector = selector.cloneNode(false);
+    selector.parentNode.replaceChild(newSelector, selector);
+
+    newSelector.innerHTML = dependencies.map(dep => `
       <option value="${dep.id}">${dep.name}</option>
     `).join('');
 
-    selector.addEventListener('change', async (e) => {
+    newSelector.addEventListener('change', async (e) => {
       await this.loadFolderTree(e.target.value);
     });
   }
@@ -103,11 +118,18 @@ class FoldersManager {
     
     if (!treeContainer) return;
 
+    // Sincronizar el selector con la dependencia actual
+    const selector = document.getElementById('dependencySelector');
+    if (selector && selector.value !== dependencyId) {
+      selector.value = dependencyId;
+    }
+
     try {
       treeContainer.innerHTML = '<div class="loading-state"><div class="spinner"></div><p>Cargando carpetas...</p></div>';
 
       const folders = await fetchWrapper.get(`/folders/dependencies/${dependencyId}/tree`);
       this.folders = folders; // Guardar para uso posterior en renderTree()
+      this.foldersTree = folders; // Guardar también en foldersTree para búsquedas
 
       // Renderizar árbol
       if (folders && folders.length > 0) {
@@ -625,13 +647,14 @@ class FoldersManager {
       });
     } else {
       // Carpeta vacía - confirmación simple
-      ui.confirm(
+      const confirmed = await ui.confirm(
         'Eliminar Carpeta',
-        `¿Estás seguro de que deseas eliminar la carpeta "${this.escapeHtml(folder.name)}"?`,
-        async () => {
-          await this.deleteFolder(folderId, false);
-        }
+        `¿Estás seguro de que deseas eliminar la carpeta "${this.escapeHtml(folder.name)}"?`
       );
+      
+      if (confirmed) {
+        await this.deleteFolder(folderId, false);
+      }
     }
   }
 

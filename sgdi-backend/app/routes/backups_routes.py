@@ -338,7 +338,7 @@ async def restore_backup(
                     "files_restored": result.get("files_restored", 0),
                     "folders_created": result.get("folders_created", 0),
                     "dependencies_created": result.get("dependencies_created", 0),
-                    "backup_filename": backup_file.filename
+                    "backup_filename": filename  # Use filename variable instead of backup_file.filename
                 }
             )
 
@@ -352,7 +352,11 @@ async def restore_backup(
                 "completed_at": result["completed_at"].isoformat() if result.get("completed_at") else None,
                 "summary": {
                     "dependencies_created": result.get("dependencies_created", 0),
+                    "dependencies_updated": result.get("dependencies_updated", 0),
                     "folders_created": result.get("folders_created", 0),
+                    "folders_updated": result.get("folders_updated", 0),
+                    "files_created": result.get("files_created", 0),
+                    "files_updated": result.get("files_updated", 0),
                     "files_restored": result.get("files_restored", 0)
                 },
                 "message": f"Restore completed successfully using {strategy} strategy"

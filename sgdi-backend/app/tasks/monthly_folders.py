@@ -37,9 +37,16 @@ def create_monthly_folders_for_month(target_year: int = None, target_month: int 
 
     try:
         # Get system user for audit logging
+        # Try to get the dedicated system user first
         system_user = db.query(User).filter(User.id == settings.system_user_id).first()
+        
+        # If not found, use any Super Admin as fallback
         if not system_user:
-            logger.error(f"System user {settings.system_user_id} not found")
+            logger.warning(f"System user {settings.system_user_id} not found, using first Super Admin as fallback")
+            system_user = db.query(User).filter(User.role == "SUPER_ADMIN").first()
+            
+        if not system_user:
+            logger.error("No system user or Super Admin found for folder creation")
             return []
 
         # Get all dependencies (Dependency model doesn't have is_active field)
@@ -81,8 +88,8 @@ def create_monthly_folders_for_month(target_year: int = None, target_month: int 
                     path=folder_path,
                     parent_id=root_folder.id,
                     dependency_id=dependency.id,
-                    created_by=settings.system_user_id,
-                    updated_by=settings.system_user_id
+                    created_by=system_user.id,
+                    updated_by=system_user.id
                 )
 
                 db.add(folder)

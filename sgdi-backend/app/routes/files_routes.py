@@ -713,8 +713,8 @@ async def update_file(
                 detail="File metadata corrupted"
             )
 
-        # 1. Crear o obtener carpeta "deprecados" en la raíz de la dependencia
-        # Buscar carpeta raíz por dependency_id y parent_id = NULL (independiente del nombre)
+        # 1. Crear estructura de carpetas deprecadas que refleje la ubicación original
+        # Buscar carpeta raíz por dependency_id y parent_id = NULL
         root_folder = db.query(Folder).filter(
             and_(
                 Folder.dependency_id == dependency.id,
@@ -728,8 +728,8 @@ async def update_file(
                 detail=f"Root folder not found for dependency {dependency.code}"
             )
 
-        # Buscar carpeta "deprecados"
-        deprecated_folder = db.query(Folder).filter(
+        # Buscar o crear carpeta "deprecados" en la raíz
+        deprecated_root = db.query(Folder).filter(
             and_(
                 Folder.dependency_id == dependency.id,
                 Folder.parent_id == root_folder.id,
@@ -737,14 +737,46 @@ async def update_file(
             )
         ).first()
 
-        # Crear carpeta "deprecados" si no existe
-        if not deprecated_folder:
-            deprecated_folder_path = f"{root_folder.path}/deprecados"
-            deprecated_folder = Folder(
+        if not deprecated_root:
+            deprecated_root_path = f"{root_folder.path}/deprecados"
+            deprecated_root = Folder(
                 id=str(uuid.uuid4()),
                 name="deprecados",
-                path=deprecated_folder_path,
+                path=deprecated_root_path,
                 parent_id=root_folder.id,
+                dependency_id=dependency.id,
+                created_by=current_user.id,
+                updated_by=current_user.id
+            )
+            db.add(deprecated_root)
+            db.flush()
+
+            # Crear directorio físico raíz
+            deprecated_root_physical = Path(settings.storage_path) / dependency.code / "deprecados"
+            deprecated_root_physical.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Created 'deprecados' root folder for dependency {dependency.code}")
+
+        # Crear subcarpeta dentro de deprecados que refleje la carpeta original
+        # Formato: deprecados/<nombre_carpeta_original>
+        original_folder_name = current_folder.name
+        deprecated_subfolder_name = original_folder_name
+        
+        # Buscar subcarpeta de deprecados específica para esta carpeta original
+        deprecated_folder = db.query(Folder).filter(
+            and_(
+                Folder.dependency_id == dependency.id,
+                Folder.parent_id == deprecated_root.id,
+                Folder.name == deprecated_subfolder_name
+            )
+        ).first()
+
+        if not deprecated_folder:
+            deprecated_folder_path = f"{deprecated_root.path}/{deprecated_subfolder_name}"
+            deprecated_folder = Folder(
+                id=str(uuid.uuid4()),
+                name=deprecated_subfolder_name,
+                path=deprecated_folder_path,
+                parent_id=deprecated_root.id,
                 dependency_id=dependency.id,
                 created_by=current_user.id,
                 updated_by=current_user.id
@@ -752,11 +784,10 @@ async def update_file(
             db.add(deprecated_folder)
             db.flush()
 
-            # Crear directorio físico
-            deprecated_physical_path = Path(settings.storage_path) / dependency.code / "deprecados"
-            deprecated_physical_path.mkdir(parents=True, exist_ok=True)
-
-            logger.info(f"Created 'deprecados' folder for dependency {dependency.code}")
+            # Crear directorio físico de subcarpeta
+            deprecated_subfolder_physical = Path(settings.storage_path) / dependency.code / "deprecados" / deprecated_subfolder_name
+            deprecated_subfolder_physical.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Created deprecated subfolder: {deprecated_folder_path}")
 
         # 2. Mover archivo antiguo a carpeta "deprecados"
         old_file_path = storage_service.get_file_path(
